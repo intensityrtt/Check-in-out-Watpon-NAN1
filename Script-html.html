@@ -1,0 +1,1358 @@
+<script>
+  // ============================================================
+  // Script.html — JavaScript หลักของระบบ Check-in/Check-out
+  // ============================================================
+
+  // ===== GLOBAL STATE =====
+  const AppState = {
+    token: localStorage.getItem('checkin_token') || null,
+    currentPage: 'dashboard',
+    events: [],
+    participants: [],
+    selectedEventID: '',
+    checkinMethod: 'name',
+    darkMode: false, // Force Light Mode globally
+    charts: {}
+  };
+
+  // ===== API HELPER =====
+  async function api(action, data = {}, token = null) {
+    return new Promise((resolve) => {
+      google.script.run
+        .withSuccessHandler((res) => {
+          resolve(res);
+        })
+        .withFailureHandler((err) => {
+          console.error('API Error:', err);
+          resolve({ success: false, message: 'เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err.message });
+        })
+        .apiGateway(action, data, token || AppState.token);
+    });
+  }
+
+  // ===== TOAST NOTIFICATION =====
+  function showToast(message, type = 'success', duration = 3000) {
+    const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+    const colors = { success: 'var(--success)', error: 'var(--danger)', warning: 'var(--warning)', info: 'var(--info)' };
+    const id = 'toast_' + Date.now();
+    const el = document.createElement('div');
+    el.id = id;
+    el.className = 'toast show toast-custom';
+    el.style.cssText = `border-left:4px solid ${colors[type]};margin-bottom:8px;`;
+    el.innerHTML = `
+    <div class="toast-body d-flex align-items-center gap-2 p-3">
+      <span>${icons[type]}</span>
+      <span style="flex:1;font-size:0.875rem">${message}</span>
+      <button class="btn-close btn-close-dark btn-sm" onclick="document.getElementById('${id}').remove()"></button>
+    </div>`;
+    document.getElementById('toastContainer').appendChild(el);
+    setTimeout(() => el.remove(), duration);
+  }
+
+  // ===== LOADING =====
+  function showLoading(msg = 'กำลังโหลด...') {
+    Swal.fire({ title: msg, allowOutsideClick: false, showConfirmButton: false, didOpen: () => Swal.showLoading(), background: 'var(--bg-card)', color: 'var(--text-primary)' });
+  }
+  function hideLoading() { Swal.close(); }
+
+  // ===== DARK MODE =====
+  function applyDarkMode() {
+    // Always force light mode classes
+    document.body.classList.remove('dark-mode');
+  }
+  function toggleDarkMode() {
+    // Disabled - system is light mode only
+  }
+
+  // ===== CLOCK =====
+  function updateClock() {
+    const el = document.getElementById('topbarClock');
+    if (el) el.textContent = new Date().toLocaleTimeString('th-TH');
+  }
+  setInterval(updateClock, 1000);
+
+  // ===== SIDEBAR =====
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('show');
+  }
+
+  // ===== PASSWORD TOGGLE =====
+  function togglePassword() {
+    const input = document.getElementById('loginPassword');
+    const icon = document.getElementById('eyeIcon');
+    if (input.type === 'password') { input.type = 'text'; icon.className = 'bi bi-eye-slash'; }
+    else { input.type = 'password'; icon.className = 'bi bi-eye'; }
+  }
+
+  // ===== LOGIN =====
+  async function doLogin() {
+    const u = document.getElementById('loginUsername').value.trim();
+    const p = document.getElementById('loginPassword').value;
+    if (!u || !p) { showToast('กรุณากรอกข้อมูลให้ครบ', 'warning'); return; }
+    const btn = document.getElementById('loginBtn');
+    btn.querySelector('.btn-text').classList.add('d-none');
+    btn.querySelector('.btn-loading').classList.remove('d-none');
+    btn.disabled = true;
+    const res = await api('login', { username: u, password: p }, '');
+    btn.querySelector('.btn-text').classList.remove('d-none');
+    btn.querySelector('.btn-loading').classList.add('d-none');
+    btn.disabled = false;
+    if (res.success) {
+      AppState.token = res.token;
+      localStorage.setItem('checkin_token', res.token);
+      document.getElementById('sidebarUsername').textContent = res.username || 'Admin';
+      showMainApp();
+      showToast('เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ', 'success');
+    } else {
+      Swal.fire({ icon: 'error', title: 'เข้าสู่ระบบไม่สำเร็จ', text: res.message, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    }
+  }
+  document.addEventListener('keypress', e => { if (e.key === 'Enter' && document.getElementById('loginModal') && !document.getElementById('loginModal').classList.contains('d-none')) doLogin(); });
+
+  // ===== LOGOUT =====
+  async function doLogout() {
+    const confirm = await Swal.fire({
+      title: 'ออกจากระบบ?', icon: 'question',
+      showCancelButton: true, confirmButtonText: 'ออกจากระบบ',
+      cancelButtonText: 'ยกเลิก', confirmButtonColor: '#EF4444',
+      background: 'var(--bg-card)', color: 'var(--text-primary)'
+    });
+    if (!confirm.isConfirmed) return;
+    await api('logout', {});
+    AppState.token = null;
+    localStorage.removeItem('checkin_token');
+    document.getElementById('mainApp').classList.add('d-none');
+    document.getElementById('loginModal').classList.remove('d-none');
+    document.getElementById('loginUsername').value = '';
+    document.getElementById('loginPassword').value = '';
+  }
+
+  // ===== SHOW/HIDE SCREENS =====
+  function showMainApp() {
+    document.getElementById('loginModal').classList.add('d-none');
+    document.getElementById('mainApp').classList.remove('d-none');
+    initApp();
+  }
+
+  function showPage(page) {
+    document.querySelectorAll('.page-section').forEach(s => s.classList.add('d-none'));
+    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+    
+    if (page === 'checkout') {
+      document.getElementById('page-checkin')?.classList.remove('d-none');
+      document.getElementById('checkinSection')?.classList.add('d-none');
+      document.getElementById('checkoutSection')?.classList.remove('d-none');
+      document.querySelector(`[data-page="checkout"]`)?.classList.add('active');
+    } else {
+      document.getElementById('page-' + page)?.classList.remove('d-none');
+      document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
+      if (page === 'checkin') {
+        document.getElementById('checkinSection')?.classList.remove('d-none');
+        document.getElementById('checkoutSection')?.classList.add('d-none');
+      }
+    }
+    
+    AppState.currentPage = page;
+    const titles = { dashboard: 'Dashboard', events: 'จัดการกิจกรรม', participants: 'ผู้เข้าร่วม', checkin: 'Check In', checkout: 'Check Out', report: 'รายงาน', export: 'Export CSV', settings: 'ตั้งค่าระบบ' };
+    document.getElementById('pageTitle').textContent = titles[page] || page;
+    
+    // Load page data
+    if (page === 'dashboard') loadDashboard();
+    else if (page === 'events') loadEventsPage();
+    else if (page === 'participants') loadParticipantsPage();
+    else if (page === 'checkout') loadCheckoutPage();
+    else if (page === 'report') loadReportPage();
+    else if (page === 'export') loadExportPage();
+    else if (page === 'settings') loadSettingsPage();
+  }
+
+  function refreshCurrentPage() { showPage(AppState.currentPage); }
+
+  // ===== INIT =====
+  async function initApp() {
+    applyDarkMode();
+    updateClock();
+    // Load global data
+    await loadAllEvents();
+    await loadAllParticipants();
+    // Init Google Charts
+    google.charts.load('current', { packages: ['corechart', 'bar'], language: 'th' });
+    google.charts.setOnLoadCallback(() => { if (AppState.currentPage === 'dashboard') loadDashboard(); });
+    // Default page
+    showPage('dashboard');
+    // QR Mode
+    if (QR_MODE && QR_TOKEN) {
+      showPage('checkin');
+      setupQRMode();
+    }
+  }
+
+  // ===== LOAD ALL EVENTS =====
+  async function loadAllEvents() {
+    const res = await api('getAllEvents');
+    if (res.success) {
+      AppState.events = res.data;
+      populateEventSelectors();
+    } else {
+      showToast(res.message || 'ไม่สามารถโหลดกิจกรรมได้', 'error');
+    }
+  }
+
+  // ===== LOAD ALL PARTICIPANTS =====
+  async function loadAllParticipants() {
+    const res = await api('getAllParticipants');
+    if (res.success) {
+      AppState.participants = res.data;
+    } else {
+      showToast(res.message || 'ไม่สามารถโหลดผู้เข้าร่วมได้', 'error');
+    }
+  }
+
+  // ===== POPULATE EVENT DROPDOWNS =====
+  function populateEventSelectors() {
+    const selects = ['globalEventSelect', 'dashEventFilter', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
+    selects.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const val = el.value;
+      el.innerHTML = '<option value="">-- ทุกกิจกรรม --</option>';
+      AppState.events.forEach(ev => {
+        const opt = document.createElement('option');
+        opt.value = ev.EventID;
+        opt.textContent = `${ev.EventName} (${ev.Date || '—'})${ev.Status === 'closed' ? ' [ปิดลงทะเบียน]' : ''}`;
+        el.appendChild(opt);
+      });
+      el.value = val;
+    });
+  }
+
+  function onEventChange() {
+    AppState.selectedEventID = document.getElementById('globalEventSelect').value;
+    if (AppState.currentPage === 'dashboard') loadDashboard();
+  }
+
+  // ===== DASHBOARD =====
+  async function loadDashboard() {
+    const eventID = document.getElementById('dashEventFilter')?.value || AppState.selectedEventID;
+    const res = await api('getDashboardStats', { eventID });
+    if (!res.success) { showToast(res.message, 'error'); return; }
+    const s = res.stats;
+    // Update stat cards
+    animateNumber('statTotal', s.totalParticipants);
+    animateNumber('statCheckedIn', s.checkedIn);
+    animateNumber('statCheckedOut', s.checkedOut);
+    animateNumber('statNotArrived', s.notArrived);
+    animateNumber('statNotCheckOut', s.notCheckedOut);
+    document.getElementById('statRate').textContent = s.attendanceRate + '%';
+    const bar = document.getElementById('rateBar');
+    if (bar) setTimeout(() => bar.style.width = s.attendanceRate + '%', 100);
+    document.getElementById('navBadgeOnline').textContent = s.notCheckedOut;
+    // Draw charts
+    if (res.charts) {
+      drawPieChart(res.charts.pieData);
+      drawBarChart(res.charts.byOrg);
+      drawLineChart(res.charts.hourly);
+    }
+  }
+
+  function animateNumber(id, target) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const start = parseInt(el.textContent) || 0;
+    const step = Math.ceil(Math.abs(target - start) / 20);
+    let current = start;
+    const interval = setInterval(() => {
+      current = current < target ? Math.min(current + step, target) : Math.max(current - step, target);
+      el.textContent = current;
+      if (current === target) clearInterval(interval);
+    }, 30);
+  }
+
+  // ===== GOOGLE CHARTS =====
+  const chartOptions = (title) => ({
+    backgroundColor: 'transparent',
+    titleTextStyle: { color: '#334155', fontSize: 14, bold: true },
+    legend: { textStyle: { color: '#475569' } },
+    hAxis: { textStyle: { color: '#64748B' }, gridlines: { color: '#E2E8F0' } },
+    vAxis: { textStyle: { color: '#64748B' }, gridlines: { color: '#E2E8F0' } },
+    chartArea: { width: '85%', height: '75%' },
+    tooltip: { textStyle: { fontSize: 13 } }
+  });
+
+  function drawPieChart(data) {
+    if (!data || data.length < 2) return;
+    const dt = google.visualization.arrayToDataTable(data);
+    const opts = { ...chartOptions(), pieHole: 0.4, colors: ['#10B981', '#3B82F6', '#64748B'], backgroundColor: 'transparent', legend: { position: 'bottom', textStyle: { color: '#475569' } }, pieSliceTextStyle: { color: '#fff' }, chartArea: { width: '90%', height: '80%' } };
+    const chart = new google.visualization.PieChart(document.getElementById('pieChart'));
+    chart.draw(dt, opts);
+  }
+
+  function drawBarChart(data) {
+    if (!data || data.length < 2) return;
+    const dt = google.visualization.arrayToDataTable(data);
+    const opts = { ...chartOptions(), colors: ['#3B82F6', '#10B981'], bar: { groupWidth: '60%' } };
+    const chart = new google.visualization.ColumnChart(document.getElementById('barChart'));
+    chart.draw(dt, opts);
+  }
+
+  function drawLineChart(data) {
+    if (!data || data.length < 2) return;
+    const dt = google.visualization.arrayToDataTable(data);
+    const opts = { ...chartOptions(), colors: ['#8B5CF6'], curveType: 'function', lineWidth: 3, pointSize: 6, areaOpacity: 0.15 };
+    const chart = new google.visualization.AreaChart(document.getElementById('lineChart'));
+    chart.draw(dt, opts);
+  }
+
+  // ===== EVENTS PAGE =====
+  async function loadEventsPage() {
+    // Show events section, hide participants
+    document.getElementById('eventsSection').classList.remove('d-none');
+    document.getElementById('participantsSection').classList.add('d-none');
+    await loadAllEvents();
+    renderEventsTable(AppState.events);
+  }
+
+  function renderEventsTable(events) {
+    const tbody = document.getElementById('eventsTableBody');
+    if (!events.length) { tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i class="bi bi-calendar-x"></i><p>ยังไม่มีกิจกรรม</p></div></td></tr>`; return; }
+    tbody.innerHTML = events.map((ev, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${ev.EventName}</strong><br><small class="text-muted">${ev.EventID}</small></td>
+      <td>${ev.Date || '—'}</td>
+      <td>${ev.StartTime || '—'} - ${ev.EndTime || '—'}</td>
+      <td>${ev.Location || '—'}</td>
+      <td>
+        <button class="btn btn-sm p-0 border-0 bg-transparent align-middle" onclick="toggleEventStatus('${ev.EventID}')" title="คลิกเพื่อเปลี่ยนสถานะเปิด/ปิดระบบ">
+          <span class="status-badge ${ev.Status === 'active' ? 'badge-checked-out' : 'badge-not-arrived'}">
+            ${ev.Status === 'active' ? '🟢 เปิดลงทะเบียน' : '🔴 ปิดลงทะเบียน'}
+          </span>
+        </button>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-secondary" onclick="showQRCode('${ev.EventID}','${ev.EventName}','${ev.Date}','${ev.QRCodeToken}')">
+          <i class="bi bi-qr-code"></i>
+        </button>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary me-1" onclick="openEditEventModal('${ev.EventID}')"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteEvent('${ev.EventID}','${ev.EventName}')"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join('');
+  }
+
+  async function toggleEventStatus(eventID) {
+    showLoading('กำลังสลับสถานะเปิด/ปิดกิจกรรม...');
+    const res = await api('toggleEventStatus', { eventID });
+    hideLoading();
+    showToast(res.message, res.success ? 'success' : 'error');
+    if (res.success) {
+      await loadAllEvents();
+      renderEventsTable(AppState.events);
+    }
+  }
+
+  function filterEvents() {
+    const q = document.getElementById('eventSearch').value.toLowerCase();
+    const filtered = AppState.events.filter(ev => ev.EventName.toLowerCase().includes(q) || ev.Location?.toLowerCase().includes(q));
+    renderEventsTable(filtered);
+  }
+
+  function openAddEventModal() {
+    document.getElementById('editEventID').value = '';
+    document.getElementById('eventModalTitle').innerHTML = '<i class="bi bi-calendar-plus me-2 text-primary"></i>เพิ่มกิจกรรม';
+    ['evtName', 'evtDate', 'evtStart', 'evtEnd', 'evtLocation', 'evtDesc'].forEach(id => document.getElementById(id).value = '');
+    new bootstrap.Modal(document.getElementById('eventModal')).show();
+  }
+
+  function openEditEventModal(eventID) {
+    const ev = AppState.events.find(e => e.EventID === eventID);
+    if (!ev) return;
+    document.getElementById('editEventID').value = eventID;
+    document.getElementById('eventModalTitle').innerHTML = '<i class="bi bi-pencil me-2 text-primary"></i>แก้ไขกิจกรรม';
+    document.getElementById('evtName').value = ev.EventName;
+    document.getElementById('evtDate').value = ev.Date ? ev.Date.split('/').reverse().join('-') : '';
+    document.getElementById('evtStart').value = ev.StartTime;
+    document.getElementById('evtEnd').value = ev.EndTime;
+    document.getElementById('evtLocation').value = ev.Location;
+    document.getElementById('evtDesc').value = ev.Description || '';
+    new bootstrap.Modal(document.getElementById('eventModal')).show();
+  }
+
+  async function saveEvent() {
+    const eventID = document.getElementById('editEventID').value;
+    const data = {
+      EventName: document.getElementById('evtName').value.trim(),
+      Date: document.getElementById('evtDate').value,
+      StartTime: document.getElementById('evtStart').value,
+      EndTime: document.getElementById('evtEnd').value,
+      Location: document.getElementById('evtLocation').value.trim(),
+      Description: document.getElementById('evtDesc').value.trim()
+    };
+    if (!data.EventName) { showToast('กรุณากรอกชื่อกิจกรรม', 'warning'); return; }
+    showLoading('กำลังบันทึก...');
+    const res = await api(eventID ? 'updateEvent' : 'addEvent', eventID ? { ...data, eventID } : data);
+    hideLoading();
+    if (res.success) {
+      bootstrap.Modal.getInstance(document.getElementById('eventModal'))?.hide();
+      showToast(res.message, 'success');
+      await loadAllEvents();
+      renderEventsTable(AppState.events);
+    } else showToast(res.message, 'error');
+  }
+
+  async function confirmDeleteEvent(eventID, name) {
+    const c = await Swal.fire({ title: `ลบกิจกรรม?`, text: name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#EF4444', confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    if (!c.isConfirmed) return;
+    const res = await api('deleteEvent', { eventID });
+    if (res.success) { showToast(res.message, 'success'); await loadAllEvents(); renderEventsTable(AppState.events); }
+    else showToast(res.message, 'error');
+  }
+
+  function showQRCode(eventID, eventName, eventDate, token) {
+    document.getElementById('qrEventName').textContent = eventName;
+    document.getElementById('qrEventDate').textContent = eventDate;
+    document.getElementById('qrCodeImg').innerHTML = '';
+    const qrUrl = APP_URL + '?qr=' + token;
+    const directUrl = APP_URL + '?id=' + eventID;
+
+    // Set URL input text
+    document.getElementById('qrCodeUrlText').value = qrUrl;
+    document.getElementById('directEventUrlText').value = directUrl;
+
+    // Reset Copy Buttons
+    const copyBtn = document.getElementById('btnCopyQRUrl');
+    if (copyBtn) {
+      copyBtn.innerHTML = '<i class="bi bi-copy"></i> คัดลอก';
+      copyBtn.className = 'btn btn-sm btn-primary';
+    }
+    const copyDirectBtn = document.getElementById('btnCopyDirectUrl');
+    if (copyDirectBtn) {
+      copyDirectBtn.innerHTML = '<i class="bi bi-copy"></i> คัดลอก';
+      copyDirectBtn.className = 'btn btn-sm btn-info text-white';
+    }
+
+    try {
+      new QRCode(document.getElementById('qrCodeImg'), { text: qrUrl, width: 200, height: 200, colorDark: '#000000', colorLight: '#ffffff' });
+    } catch (e) {
+      document.getElementById('qrCodeImg').innerHTML = `<img src="https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(qrUrl)}" style="width:200px">`;
+    }
+    new bootstrap.Modal(document.getElementById('qrModal')).show();
+  }
+
+  window.copyQRUrl = async function() {
+    const urlInput = document.getElementById('qrCodeUrlText');
+    if (!urlInput) return;
+    urlInput.select();
+    urlInput.setSelectionRange(0, 99999);
+
+    try {
+      await navigator.clipboard.writeText(urlInput.value);
+      const copyBtn = document.getElementById('btnCopyQRUrl');
+      if (copyBtn) {
+        copyBtn.innerHTML = '<i class="bi bi-check-lg"></i> คัดลอกแล้ว!';
+        copyBtn.className = 'btn btn-sm btn-success';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<i class="bi bi-copy"></i> คัดลอก';
+          copyBtn.className = 'btn btn-sm btn-primary';
+        }, 2000);
+      }
+      showToast('คัดลอกลิงก์หลักเรียบร้อยแล้ว!', 'success');
+    } catch (err) {
+      showToast('ไม่สามารถคัดลอกอัตโนมัติได้ กรุณาคัดลอกด้วยตนเอง', 'warning');
+    }
+  }
+
+  window.copyDirectUrl = async function() {
+    const urlInput = document.getElementById('directEventUrlText');
+    if (!urlInput) return;
+    urlInput.select();
+    urlInput.setSelectionRange(0, 99999);
+
+    try {
+      await navigator.clipboard.writeText(urlInput.value);
+      const copyBtn = document.getElementById('btnCopyDirectUrl');
+      if (copyBtn) {
+        copyBtn.innerHTML = '<i class="bi bi-check-lg"></i> คัดลอกแล้ว!';
+        copyBtn.className = 'btn btn-sm btn-success';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<i class="bi bi-copy"></i> คัดลอก';
+          copyBtn.className = 'btn btn-sm btn-info text-white';
+        }, 2000);
+      }
+      showToast('คัดลอกลิงก์สำรองเรียบร้อยแล้ว!', 'success');
+    } catch (err) {
+      showToast('ไม่สามารถคัดลอกอัตโนมัติได้ กรุณาคัดลอกด้วยตนเอง', 'warning');
+    }
+  }
+
+  function printQR() { window.print(); }
+
+  // ===== PARTICIPANTS PAGE =====
+  async function loadParticipantsPage() {
+    document.getElementById('participantsPageContent').innerHTML = document.getElementById('page-events').querySelector('#participantsSection').outerHTML;
+    document.getElementById('eventsSection').classList.add('d-none');
+    document.getElementById('participantsSection').classList.remove('d-none');
+    await loadAllParticipants();
+    renderParticipantsTable(AppState.participants);
+    document.getElementById('participantCount').textContent = `ทั้งหมด ${AppState.participants.length} คน`;
+  }
+
+  function renderParticipantsTable(participants) {
+    const tbody = document.getElementById('participantsTableBody');
+    if (!participants.length) { tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i class="bi bi-people"></i><p>ยังไม่มีผู้เข้าร่วม</p></div></td></tr>`; return; }
+    tbody.innerHTML = participants.map((p, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><span class="badge bg-secondary">${p.PID}</span></td>
+      <td><strong>${p.FullName}</strong></td>
+      <td>${p.Organization || '—'}</td>
+      <td>${p.Position || '—'}</td>
+      <td>${p.Phone || '—'}</td>
+      <td>${p.Email || '—'}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary me-1" onclick="openEditParticipantModal('${p.PID}')"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteParticipant('${p.PID}','${p.FullName}')"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join('');
+  }
+
+  function filterParticipants() {
+    const q = document.getElementById('participantSearch')?.value.toLowerCase() || '';
+    const filtered = AppState.participants.filter(p =>
+      p.FullName.toLowerCase().includes(q) || p.PID.toLowerCase().includes(q) ||
+      p.Phone?.toLowerCase().includes(q) || p.Organization?.toLowerCase().includes(q));
+    renderParticipantsTable(filtered);
+  }
+
+  function openAddParticipantModal() {
+    document.getElementById('editPID').value = '';
+    document.getElementById('participantModalTitle').innerHTML = '<i class="bi bi-person-plus me-2 text-primary"></i>เพิ่มผู้เข้าร่วม';
+    ['pFirst', 'pLast', 'pOrg', 'pPos', 'pPhone', 'pEmail'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('pTitle').value = 'นาย';
+    new bootstrap.Modal(document.getElementById('participantModal')).show();
+  }
+
+  function openEditParticipantModal(pid) {
+    const p = AppState.participants.find(x => x.PID === pid);
+    if (!p) return;
+    document.getElementById('editPID').value = pid;
+    document.getElementById('participantModalTitle').innerHTML = '<i class="bi bi-pencil me-2 text-primary"></i>แก้ไขผู้เข้าร่วม';
+    document.getElementById('pTitle').value = p.Title;
+    document.getElementById('pFirst').value = p.FirstName;
+    document.getElementById('pLast').value = p.LastName;
+    document.getElementById('pOrg').value = p.Organization;
+    document.getElementById('pPos').value = p.Position;
+    document.getElementById('pPhone').value = p.Phone;
+    document.getElementById('pEmail').value = p.Email;
+    new bootstrap.Modal(document.getElementById('participantModal')).show();
+  }
+
+  async function saveParticipant() {
+    const pid = document.getElementById('editPID').value;
+    const data = {
+      PID: pid,
+      Title: document.getElementById('pTitle').value,
+      FirstName: document.getElementById('pFirst').value.trim(),
+      LastName: document.getElementById('pLast').value.trim(),
+      Organization: document.getElementById('pOrg').value.trim(),
+      Position: document.getElementById('pPos').value.trim(),
+      Phone: document.getElementById('pPhone').value.trim(),
+      Email: document.getElementById('pEmail').value.trim()
+    };
+    if (!data.FirstName || !data.LastName) { showToast('กรุณากรอกชื่อและนามสกุล', 'warning'); return; }
+    showLoading('กำลังบันทึก...');
+    const res = await api(pid ? 'updateParticipant' : 'addParticipant', data);
+    hideLoading();
+    if (res.success) {
+      bootstrap.Modal.getInstance(document.getElementById('participantModal'))?.hide();
+      showToast(res.message, 'success');
+      await loadAllParticipants();
+      renderParticipantsTable(AppState.participants);
+      document.getElementById('participantCount').textContent = `ทั้งหมด ${AppState.participants.length} คน`;
+    } else showToast(res.message, 'error');
+  }
+
+  async function confirmDeleteParticipant(pid, name) {
+    const c = await Swal.fire({ title: 'ลบผู้เข้าร่วม?', text: name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#EF4444', confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    if (!c.isConfirmed) return;
+    const res = await api('deleteParticipant', { PID: pid });
+    if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsTable(AppState.participants); }
+    else showToast(res.message, 'error');
+  }
+
+  // ===== IMPORT CSV =====
+  function openImportModal() { new bootstrap.Modal(document.getElementById('importModal')).show(); }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'csvFile') {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (ev) {
+        const lines = ev.target.result.split('\n').filter(l => l.trim());
+        document.getElementById('importPreview').innerHTML = `<div class="alert alert-success">พบ ${lines.length - 1} รายการ (ไม่รวม Header)</div>`;
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+  });
+
+  async function doImportCSV() {
+    const file = document.getElementById('csvFile').files[0];
+    if (!file) { showToast('กรุณาเลือกไฟล์ CSV', 'warning'); return; }
+    const reader = new FileReader();
+    reader.onload = async function (ev) {
+      const lines = ev.target.result.split('\n').filter(l => l.trim());
+      const csvData = lines.slice(1).map(line => {
+        const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+        return { Title: cols[0] || '', FirstName: cols[1] || '', LastName: cols[2] || '', Organization: cols[3] || '', Position: cols[4] || '', Email: cols[5] || '', Phone: cols[6] || '' };
+      });
+      showLoading('กำลังนำเข้าข้อมูล...');
+      const res = await api('importParticipants', { csvData });
+      hideLoading();
+      bootstrap.Modal.getInstance(document.getElementById('importModal'))?.hide();
+      if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsTable(AppState.participants); }
+      else showToast(res.message, 'error');
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  // ===== CHECK-IN =====
+  function setCheckinMethod(method) {
+    AppState.checkinMethod = method;
+    ['name', 'phone', 'pid', 'qr', 'register'].forEach(m => document.getElementById('method' + m.charAt(0).toUpperCase() + m.slice(1))?.classList.remove('active'));
+    document.getElementById('method' + method.charAt(0).toUpperCase() + method.slice(1))?.classList.add('active');
+    const labels = { name: 'ค้นหาชื่อ', phone: 'ค้นหาเบอร์โทร', pid: 'ค้นหา PID', qr: 'สแกน QR Code', register: 'ลงทะเบียนใหม่' };
+    document.getElementById('searchLabel').textContent = labels[method];
+    document.getElementById('searchInputArea').classList.toggle('d-none', method === 'qr' || method === 'register');
+    document.getElementById('qrInputArea').classList.toggle('d-none', method !== 'qr');
+    document.getElementById('registerInputArea').classList.toggle('d-none', method !== 'register');
+    document.getElementById('checkinResults').innerHTML = '';
+    document.getElementById('checkinSearch').value = '';
+  }
+
+  async function searchForCheckin() {
+    const q = document.getElementById('checkinSearch').value.trim();
+    if (q.length < 1) { document.getElementById('checkinResults').innerHTML = ''; return; }
+    const res = await api('searchParticipants', { query: q });
+    if (!res.success || !res.data.length) {
+      document.getElementById('checkinResults').innerHTML = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>ไม่พบผู้เข้าร่วม "${q}"</div>`;
+      return;
+    }
+    const eventID = document.getElementById('checkinEventSelect').value;
+    document.getElementById('checkinResults').innerHTML = res.data.slice(0, 10).map(p => `
+    <div class="participant-result mb-2 d-flex align-items-center gap-3">
+      <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
+      <div style="flex:1">
+        <div class="fw-bold">${p.FullName}</div>
+        <small class="text-muted">${p.Organization || ''} ${p.Position ? '| ' + p.Position : ''}</small>
+        <div><small class="text-muted">${p.Phone || ''} | ${p.PID}</small></div>
+      </div>
+      <button class="btn btn-success btn-sm" onclick="doCheckIn('${p.PID}')">
+        <i class="bi bi-check-circle"></i> Check-in
+      </button>
+    </div>`).join('');
+  }
+
+  async function doCheckIn(pid) {
+    const eventID = document.getElementById('checkinEventSelect').value;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+    showLoading('กำลัง Check-in...');
+    const res = await api('checkIn', {
+      pid, eventID,
+      browser: navigator.userAgent,
+      device: /Mobile|Android|iPhone/.test(navigator.userAgent) ? 'Mobile' : 'Desktop'
+    });
+    hideLoading();
+    if (res.success) {
+      Swal.fire({ icon: 'success', title: 'Check-in สำเร็จ!', html: `<b>${res.data.participant.FullName}</b><br><small>${res.data.checkInTime}</small>`, background: 'var(--bg-card)', color: 'var(--text-primary)', timer: 2500, showConfirmButton: false });
+      document.getElementById('checkinSearch').value = '';
+      document.getElementById('checkinResults').innerHTML = '';
+      loadRecentCheckins();
+    } else if (res.alreadyCheckedIn) {
+      Swal.fire({ icon: 'info', title: 'Check-in แล้ว', text: res.message, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    } else {
+      Swal.fire({ icon: 'error', title: 'เช็คอินไม่สำเร็จ', text: res.message, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    }
+  }
+
+  async function doQRCheckin() {
+    const input = document.getElementById('qrInput').value.trim();
+    const eventID = document.getElementById('checkinEventSelect').value;
+    if (!input) return;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+    await doCheckIn(input);
+    document.getElementById('qrInput').value = '';
+  }
+
+  async function doRegisterCheckin() {
+    const eventID = document.getElementById('checkinEventSelect').value;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+
+    const participantData = {
+      Title: document.getElementById('regTitle').value,
+      FirstName: document.getElementById('regFirstName').value.trim(),
+      LastName: document.getElementById('regLastName').value.trim(),
+      Organization: document.getElementById('regOrg').value.trim(),
+      Position: document.getElementById('regPosition').value.trim(),
+      Phone: document.getElementById('regPhone').value.trim(),
+      Email: document.getElementById('regEmail').value.trim()
+    };
+
+    showLoading('กำลังบันทึกข้อมูลและ Check-in...');
+    const res = await api('registerAndCheckIn', {
+      eventID,
+      participantData,
+      checkinData: {
+        browser: navigator.userAgent,
+        device: /Mobile|Android|iPhone/.test(navigator.userAgent) ? 'Mobile' : 'Desktop'
+      }
+    });
+    hideLoading();
+
+    if (res.success) {
+      Swal.fire({
+        icon: 'success',
+        title: 'บันทึกเวลาสำเร็จ!',
+        html: `<b>ยินดีต้อนรับคุณ ${res.data.fullName}</b><br><small>บันทึกเวลาเข้าร่วมสำเร็จเรียบร้อยแล้ว</small>`,
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)',
+        timer: 3000,
+        showConfirmButton: false
+      });
+      document.getElementById('checkinRegisterForm').reset();
+
+      // โหลดข้อมูลประวัติใหม่เฉพาะสำหรับ Admin เท่านั้น (ไม่ใช่ QR Mode บุคคลทั่วไป)
+      if (typeof QR_MODE === 'undefined' || !QR_MODE) {
+        await loadAllParticipants();
+        loadRecentCheckins();
+      }
+    } else {
+      Swal.fire({ icon: 'error', title: 'บันทึกเวลาไม่สำเร็จ', text: res.message, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+    }
+  }
+
+  // ===== PUBLIC CHECK-IN / CHECK-OUT TABS =====
+  function switchPublicModeTab(tab) {
+    const btnCheckin = document.getElementById('btn-public-checkin');
+    const btnCheckout = document.getElementById('btn-public-checkout');
+    const contentCheckin = document.getElementById('publicCheckinContent');
+    const contentCheckout = document.getElementById('publicCheckoutContent');
+
+    if (tab === 'checkin') {
+      btnCheckin.classList.add('active');
+      btnCheckin.classList.remove('text-secondary');
+      btnCheckout.classList.remove('active');
+      btnCheckout.classList.add('text-secondary');
+      contentCheckin.classList.remove('d-none');
+      contentCheckout.classList.add('d-none');
+    } else {
+      btnCheckout.classList.add('active');
+      btnCheckout.classList.remove('text-secondary');
+      btnCheckin.classList.remove('active');
+      btnCheckin.classList.add('text-secondary');
+      contentCheckout.classList.remove('d-none');
+      contentCheckin.classList.add('d-none');
+      
+      // Reset checkout sub-views
+      document.getElementById('publicCheckoutSearchVal').value = '';
+      document.getElementById('publicCheckoutSearchResults').innerHTML = '';
+      document.getElementById('publicCheckoutSearchResults').classList.add('d-none');
+      document.getElementById('publicCheckoutFormArea').classList.add('d-none');
+    }
+  }
+
+  async function searchParticipantForPublicCheckout() {
+    const q = document.getElementById('publicCheckoutSearchVal').value.trim();
+    const eventID = document.getElementById('checkinEventSelect')?.value || '';
+    if (!eventID) {
+      showToast('ไม่พบรหัสกิจกรรม กรุณาลองแสกน QR Code ใหม่อีกครั้ง', 'error');
+      return;
+    }
+    if (q.length < 1) {
+      showToast('กรุณากรอกชื่อ หรือเบอร์โทรศัพท์เพื่อค้นหา', 'warning');
+      return;
+    }
+
+    showLoading('กำลังค้นหาข้อมูล...');
+    const res = await api('searchParticipantForPublicCheckout', { eventID, query: q });
+    hideLoading();
+
+    const resultsDiv = document.getElementById('publicCheckoutSearchResults');
+    resultsDiv.classList.remove('d-none');
+    document.getElementById('publicCheckoutFormArea').classList.add('d-none'); // Hide form initially
+
+    if (!res.success || !res.data.length) {
+      resultsDiv.innerHTML = `<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>ไม่พบข้อมูลผู้ลงทะเบียนตามเงื่อนไขที่ระบุ กรุณาตรวจสอบตัวสะกดหรือติดต่อเจ้าหน้าที่</div>`;
+      return;
+    }
+
+    resultsDiv.innerHTML = `
+      <div class="list-group">
+        <div class="list-group-item bg-light fw-bold text-secondary">กรุณาเลือกชื่อของคุณจากรายการต่อไปนี้:</div>
+        ${res.data.map(p => {
+          let badge = '';
+          let btn = '';
+          if (p.Status === 'checked-out') {
+            badge = '<span class="badge bg-secondary">Check-out แล้ว</span>';
+            btn = `<button class="btn btn-outline-secondary btn-sm" disabled><i class="bi bi-check2-all"></i> Check-out แล้ว</button>`;
+          } else if (p.Status === 'can-checkout') {
+            badge = '<span class="badge bg-success">อยู่ในงาน</span>';
+            // เผื่อมีเครื่องหมายคำพูดในชื่อ แนะนำให้แปลง JSON เป็น string แบบเซฟ
+            const pStr = encodeURIComponent(JSON.stringify(p));
+            btn = `<button class="btn btn-warning btn-sm fw-bold" onclick="selectParticipantForPublicCheckout('${pStr}')"><i class="bi bi-box-arrow-right"></i> เลือกเพื่อ Check-out</button>`;
+          } else {
+            badge = '<span class="badge bg-danger">ยังไม่ได้เช็คอิน</span>';
+            btn = `<button class="btn btn-primary btn-sm" onclick="switchPublicModeTab('checkin')"><i class="bi bi-box-arrow-in-right"></i> ไปเช็คอินก่อน</button>`;
+          }
+          return `
+            <div class="list-group-item d-flex align-items-center justify-content-between p-3">
+              <div>
+                <div class="fw-bold">${p.FullName} ${badge}</div>
+                <div class="text-muted small">${p.Organization || ''}</div>
+              </div>
+              <div>${btn}</div>
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  window.selectParticipantForPublicCheckout = function(pStr) {
+    const p = JSON.parse(decodeURIComponent(pStr));
+    // Fill the checkout form
+    document.getElementById('pubOutPID').value = p.PID;
+    document.getElementById('pubOutTitle').value = p.Title || 'นาย';
+    document.getElementById('pubOutFirstName').value = p.FirstName || '';
+    document.getElementById('pubOutLastName').value = p.LastName || '';
+    document.getElementById('pubOutOrg').value = p.Organization || '';
+    document.getElementById('pubOutPosition').value = p.Position || '';
+    document.getElementById('pubOutPhone').value = p.Phone || '';
+    document.getElementById('pubOutEmail').value = p.Email || '';
+    document.getElementById('pubOutRemark').value = '';
+
+    // Show form, hide results list
+    document.getElementById('publicCheckoutSearchResults').classList.add('d-none');
+    document.getElementById('publicCheckoutFormArea').classList.remove('d-none');
+  }
+
+  async function doPublicCheckout() {
+    const eventID = document.getElementById('checkinEventSelect')?.value || '';
+    if (!eventID) {
+      showToast('ไม่พบรหัสกิจกรรม กรุณาลองแสกน QR Code ใหม่อีกครั้ง', 'error');
+      return;
+    }
+
+    const data = {
+      pid: document.getElementById('pubOutPID').value,
+      eventID: eventID,
+      title: document.getElementById('pubOutTitle').value,
+      firstName: document.getElementById('pubOutFirstName').value.trim(),
+      lastName: document.getElementById('pubOutLastName').value.trim(),
+      organization: document.getElementById('pubOutOrg').value.trim(),
+      position: document.getElementById('pubOutPosition').value.trim(),
+      phone: document.getElementById('pubOutPhone').value.trim(),
+      email: document.getElementById('pubOutEmail').value.trim(),
+      remark: document.getElementById('pubOutRemark').value.trim()
+    };
+
+    showLoading('กำลังบันทึกข้อมูล Check-out...');
+    const res = await api('updateAndCheckOutPublic', data);
+    hideLoading();
+
+    if (res.success) {
+      Swal.fire({
+        icon: 'success',
+        title: 'Check-out สำเร็จ!',
+        html: `<b>คุณ ${res.data.fullName}</b> ได้ทำการ Check-out เรียบร้อยแล้ว<br><small>ระยะเวลาเข้าร่วม: ${res.data.duration}</small>`,
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)',
+        timer: 4000,
+        showConfirmButton: false
+      });
+      
+      // Clear forms
+      document.getElementById('publicCheckoutForm').reset();
+      document.getElementById('publicCheckoutFormArea').classList.add('d-none');
+      document.getElementById('publicCheckoutSearchVal').value = '';
+    } else {
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: res.message,
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+    }
+  }
+
+  async function loadRecentCheckins() {
+    const eventID = document.getElementById('checkinEventSelect').value;
+    if (!eventID) return;
+    const res = await api('getAttendanceByEvent', { eventID });
+    if (!res.success) return;
+    const tbody = document.getElementById('recentCheckinBody');
+    const list = res.data.slice(-20).reverse();
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ยังไม่มีการ Check-in</td></tr>'; return; }
+    const pidMap = {};
+    AppState.participants.forEach(p => pidMap[p.PID] = p);
+    tbody.innerHTML = list.map((a, i) => {
+      const p = pidMap[a.PID] || { FullName: a.PID, Organization: '' };
+      return `<tr>
+      <td>${i + 1}</td>
+      <td><strong>${p.FullName}</strong></td>
+      <td>${p.Organization || '—'}</td>
+      <td>${a.CheckInTime}</td>
+      <td><span class="status-badge ${a.Status === 'checked-out' ? 'badge-checked-out' : 'badge-checked-in'}">${a.Status === 'checked-out' ? 'Check-out แล้ว' : 'อยู่ในงาน'}</span></td>
+    </tr>`;
+    }).join('');
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'checkinEventSelect') loadRecentCheckins();
+    if (e.target.id === 'checkoutEventSelect') loadPendingCheckout();
+  });
+
+  function setupQRMode() {
+    if (QR_EVENT) { setCheckinMethod('pid'); }
+  }
+
+  // ===== CHECK-OUT =====
+  function loadCheckoutPage() {
+    document.getElementById('checkoutSection')?.classList.remove('d-none');
+    
+    // Auto-select event from global event select if not set
+    const checkoutSelect = document.getElementById('checkoutEventSelect');
+    if (checkoutSelect) {
+      if (AppState.selectedEventID) {
+        checkoutSelect.value = AppState.selectedEventID;
+      }
+      loadPendingCheckout();
+    }
+  }
+
+  async function searchForCheckout() {
+    const q = document.getElementById('checkoutSearch').value.trim();
+    if (q.length < 1) { document.getElementById('checkoutResults').innerHTML = ''; return; }
+    const res = await api('searchParticipants', { query: q });
+    if (!res.success || !res.data.length) {
+      document.getElementById('checkoutResults').innerHTML = `<div class="alert alert-warning">ไม่พบผู้เข้าร่วม "${q}"</div>`;
+      return;
+    }
+    const eventID = document.getElementById('checkoutEventSelect').value;
+    document.getElementById('checkoutResults').innerHTML = res.data.slice(0, 10).map(p => `
+    <div class="participant-result mb-2 d-flex align-items-center gap-3">
+      <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
+      <div style="flex:1">
+        <div class="fw-bold">${p.FullName}</div>
+        <small class="text-muted">${p.Organization || ''} | ${p.PID}</small>
+      </div>
+      <button class="btn btn-warning btn-sm" onclick="doCheckOut('${p.PID}')">
+        <i class="bi bi-box-arrow-right"></i> Check-out
+      </button>
+    </div>`).join('');
+  }
+
+  async function doCheckOut(pid) {
+    const eventID = document.getElementById('checkoutEventSelect').value;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+    showLoading('กำลัง Check-out...');
+    const res = await api('checkOut', { pid, eventID });
+    hideLoading();
+    if (res.success) {
+      Swal.fire({ icon: 'success', title: 'Check-out สำเร็จ!', html: `<b>${res.data.participant.FullName}</b><br>ระยะเวลาเข้าร่วม: <b>${res.data.duration}</b>`, background: 'var(--bg-card)', color: 'var(--text-primary)', timer: 3000, showConfirmButton: false });
+      document.getElementById('checkoutSearch').value = '';
+      document.getElementById('checkoutResults').innerHTML = '';
+      loadPendingCheckout();
+    } else {
+      showToast(res.message, 'error');
+    }
+  }
+
+  async function loadPendingCheckout() {
+    const eventID = document.getElementById('checkoutEventSelect').value;
+    const btnSelect = document.getElementById('btnCheckoutSelected');
+    const btnAll = document.getElementById('btnCheckoutAll');
+    const selectAllPending = document.getElementById('selectAllPending');
+    const selectedCountSpan = document.getElementById('selectedPendingCount');
+    
+    // Reset controls
+    if (btnSelect) btnSelect.disabled = true;
+    if (btnAll) btnAll.disabled = true;
+    if (selectAllPending) selectAllPending.checked = false;
+    if (selectedCountSpan) selectedCountSpan.textContent = '0';
+
+    if (!eventID) return;
+    const res = await api('getAttendanceByEvent', { eventID });
+    const tbody = document.getElementById('pendingCheckoutBody');
+    if (!res.success) return;
+    const pending = res.data.filter(a => a.Status === 'checked-in');
+    if (!pending.length) { 
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">ทุกคน Check-out แล้ว ✅</td></tr>'; 
+      return; 
+    }
+    
+    if (btnAll) btnAll.disabled = false;
+    
+    const pidMap = {};
+    AppState.participants.forEach(p => pidMap[p.PID] = p);
+    tbody.innerHTML = pending.map((a, i) => {
+      const p = pidMap[a.PID] || { FullName: a.PID, Organization: '' };
+      return `<tr>
+      <td class="text-center"><input type="checkbox" class="pending-chk" value="${a.PID}" onchange="onPendingChkChange()"></td>
+      <td>${i + 1}</td>
+      <td><strong>${p.FullName}</strong></td>
+      <td>${p.Organization || '—'}</td>
+      <td>${a.CheckInTime}</td>
+      <td><button class="btn btn-warning btn-sm" onclick="doCheckOut('${a.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button></td>
+    </tr>`;
+    }).join('');
+  }
+
+  // Batch checkboxes helper functions
+  window.toggleSelectAllPending = function(master) {
+    const chks = document.querySelectorAll('.pending-chk');
+    chks.forEach(chk => chk.checked = master.checked);
+    window.onPendingChkChange();
+  }
+
+  window.onPendingChkChange = function() {
+    const chks = document.querySelectorAll('.pending-chk:checked');
+    const btnSelect = document.getElementById('btnCheckoutSelected');
+    const selectedCountSpan = document.getElementById('selectedPendingCount');
+    
+    if (btnSelect) {
+      btnSelect.disabled = chks.length === 0;
+    }
+    if (selectedCountSpan) {
+      selectedCountSpan.textContent = chks.length;
+    }
+  }
+
+  window.doBatchCheckOut = async function() {
+    const eventID = document.getElementById('checkoutEventSelect').value;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+    
+    const chks = document.querySelectorAll('.pending-chk:checked');
+    const pids = Array.from(chks).map(chk => chk.value);
+    if (!pids.length) { showToast('กรุณาเลือกผู้เข้าร่วมก่อน', 'warning'); return; }
+
+    const confirm = await Swal.fire({
+      title: 'ยืนยัน Check-out?',
+      text: `คุณต้องการ Check-out ผู้เข้าร่วมที่เลือกจำนวน ${pids.length} คน ใช่หรือไม่?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: 'var(--warning)',
+      confirmButtonText: 'ใช่, Check-out ทั้งหมด',
+      cancelButtonText: 'ยกเลิก',
+      background: 'var(--bg-card)',
+      color: 'var(--text-primary)'
+    });
+    
+    if (!confirm.isConfirmed) return;
+
+    showLoading('กำลังทำรายการ Check-out...');
+    const res = await api('batchCheckOut', { eventID, pids });
+    hideLoading();
+
+    if (res.success) {
+      Swal.fire({ icon: 'success', title: 'สำเร็จ!', text: res.message, timer: 3000, showConfirmButton: false, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+      loadPendingCheckout();
+    } else {
+      showToast(res.message, 'error');
+    }
+  }
+
+  window.doCheckOutAll = async function() {
+    const eventID = document.getElementById('checkoutEventSelect').value;
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+
+    const chks = document.querySelectorAll('.pending-chk');
+    const pids = Array.from(chks).map(chk => chk.value);
+    if (!pids.length) { showToast('ไม่มีผู้เข้าร่วมที่ต้อง Check-out', 'info'); return; }
+
+    const confirm = await Swal.fire({
+      title: 'ยืนยัน Check-out ทั้งหมด?',
+      text: `คุณต้องการ Check-out ผู้เข้าร่วมกิจกรรมนี้ที่ยังไม่ได้ Check-out ทั้งหมดจำนวน ${pids.length} คน ใช่หรือไม่?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: 'var(--danger)',
+      confirmButtonText: 'ใช่, Check-out ทุกคน',
+      cancelButtonText: 'ยกเลิก',
+      background: 'var(--bg-card)',
+      color: 'var(--text-primary)'
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    showLoading('กำลังทำรายการ Check-out ทั้งหมด...');
+    const res = await api('batchCheckOut', { eventID, pids });
+    hideLoading();
+
+    if (res.success) {
+      Swal.fire({ icon: 'success', title: 'สำเร็จ!', text: res.message, timer: 3000, showConfirmButton: false, background: 'var(--bg-card)', color: 'var(--text-primary)' });
+      loadPendingCheckout();
+    } else {
+      showToast(res.message, 'error');
+    }
+  }
+
+  // ===== REPORT PAGE =====
+  async function loadReportPage() {
+    const content = document.getElementById('reportPageContent');
+    content.innerHTML = `
+    <div class="page-header">
+      <div class="page-header-title"><h4><i class="bi bi-file-earmark-bar-graph text-primary me-2"></i>รายงาน</h4><p>รายงานการเข้าร่วมกิจกรรม</p></div>
+    </div>
+    <div class="card mb-3"><div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+          <label class="form-label">เลือกกิจกรรม</label>
+          <select class="form-select" id="reportEventSelect" onchange="loadReportData()">
+            <option value="">-- ทุกกิจกรรม --</option>
+          </select>
+        </div>
+        <div class="col-md-6 d-flex gap-2">
+          <button class="btn btn-primary" onclick="loadReportData()"><i class="bi bi-search"></i> แสดงรายงาน</button>
+        </div>
+      </div>
+    </div></div>
+    <div class="card"><div class="card-header d-flex align-items-center justify-content-between">
+      <span><i class="bi bi-table me-2"></i>รายชื่อผู้เข้าร่วม</span>
+      <small class="text-muted" id="reportCount"></small>
+    </div>
+    <div class="card-body p-0"><div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>#</th><th>ชื่อ-นามสกุล</th><th>องค์กร</th><th>Check-in</th><th>Check-out</th><th>ระยะเวลา</th><th>สถานะ</th></tr></thead>
+        <tbody id="reportTableBody"><tr><td colspan="7" class="text-center py-4 text-muted">กรุณาเลือกกิจกรรม</td></tr></tbody>
+      </table>
+    </div></div></div>`;
+    populateEventSelectors();
+  }
+
+  async function loadReportData() {
+    const eventID = document.getElementById('reportEventSelect')?.value || '';
+    const res = await api('getFullAttendanceReport', { eventID });
+    if (!res.success) { showToast(res.message, 'error'); return; }
+    document.getElementById('reportCount').textContent = `ทั้งหมด ${res.data.length} คน`;
+    const statusMap = { 'checked-in': '<span class="status-badge badge-checked-in">อยู่ในงาน</span>', 'checked-out': '<span class="status-badge badge-checked-out">Check-out แล้ว</span>', 'not-arrived': '<span class="status-badge badge-not-arrived">ยังไม่มา</span>' };
+    document.getElementById('reportTableBody').innerHTML = res.data.map(r => `
+    <tr>
+      <td>${r.no}</td><td><strong>${r.FullName}</strong></td>
+      <td>${r.Organization || '—'}</td><td>${r.CheckInTime || '—'}</td>
+      <td>${r.CheckOutTime || '—'}</td><td>${r.Duration || '—'}</td>
+      <td>${statusMap[r.Status] || r.Status}</td>
+    </tr>`).join('');
+  }
+
+  // ===== EXPORT PAGE =====
+  async function loadExportPage() {
+    populateEventSelectors();
+    const config = await api('getSystemConfig');
+    if (config.success) {
+      document.getElementById('previewLine1').textContent = config.data.CSV_LINE1 || 'บรรทัดที่ 1';
+      document.getElementById('previewLine2').textContent = config.data.CSV_LINE2 || 'บรรทัดที่ 2';
+    }
+  }
+
+  async function doExportTemplate() {
+    const eventID = document.getElementById('exportEventSelect').value;
+    showLoading('กำลังสร้างไฟล์ CSV...');
+    const res = await api('exportAttendanceCSV', { eventID });
+    hideLoading();
+    if (res.success) {
+      downloadCSV(res.csvContent, res.filename);
+      showToast(`Export สำเร็จ ${res.count} รายการ`, 'success');
+    } else showToast(res.message, 'error');
+  }
+
+  async function doExportFull() {
+    const eventID = document.getElementById('exportFullEventSelect').value;
+    showLoading('กำลังสร้างไฟล์ CSV...');
+    const res = await api('exportFullReportCSV', { eventID });
+    hideLoading();
+    if (res.success) {
+      downloadCSV(res.csvContent, res.filename);
+      showToast(`Export สำเร็จ ${res.count} รายการ`, 'success');
+    } else showToast(res.message, 'error');
+  }
+
+  function downloadCSV(content, filename) {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ===== SETTINGS PAGE =====
+  async function loadSettingsPage() {
+    const content = document.getElementById('settingsPageContent');
+    const res = await api('getSystemConfig');
+    const cfg = res.success ? res.data : {};
+    content.innerHTML = `
+    <div class="page-header">
+      <div class="page-header-title"><h4><i class="bi bi-gear text-primary me-2"></i>ตั้งค่าระบบ</h4><p>กำหนดค่าการใช้งานระบบ</p></div>
+    </div>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header">ตั้งค่าทั่วไป</div><div class="card-body">
+          <div class="mb-3"><label class="form-label">ชื่อระบบ</label>
+            <input type="text" class="form-control" id="cfgSystemName" value="${cfg.SYSTEM_NAME || ''}"></div>
+          <div class="mb-3"><label class="form-label">ชื่อผู้ใช้ Admin</label>
+            <input type="text" class="form-control" id="cfgUsername" value="${cfg.ADMIN_USERNAME || ''}"></div>
+          <button class="btn btn-primary" onclick="saveGeneralSettings()"><i class="bi bi-check-circle"></i> บันทึก</button>
+        </div></div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header">ตั้งค่า CSV Export</div><div class="card-body">
+          <div class="mb-3"><label class="form-label">บรรทัดที่ 1 (Column 4)</label>
+            <input type="text" class="form-control" id="cfgLine1" value="${cfg.CSV_LINE1 || ''}"></div>
+          <div class="mb-3"><label class="form-label">บรรทัดที่ 2 (Column 5)</label>
+            <input type="text" class="form-control" id="cfgLine2" value="${cfg.CSV_LINE2 || ''}"></div>
+          <button class="btn btn-primary" onclick="saveCSVSettings()"><i class="bi bi-check-circle"></i> บันทึก</button>
+        </div></div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header">เปลี่ยนรหัสผ่าน</div><div class="card-body">
+          <div class="mb-3"><label class="form-label">รหัสผ่านเดิม</label>
+            <input type="password" class="form-control" id="cfgOldPw"></div>
+          <div class="mb-3"><label class="form-label">รหัสผ่านใหม่</label>
+            <input type="password" class="form-control" id="cfgNewPw"></div>
+          <div class="mb-3"><label class="form-label">ยืนยันรหัสผ่านใหม่</label>
+            <input type="password" class="form-control" id="cfgConfirmPw"></div>
+          <button class="btn btn-warning" onclick="doChangePassword()"><i class="bi bi-key"></i> เปลี่ยนรหัสผ่าน</button>
+        </div></div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header">Setup ระบบ (รันครั้งแรก)</div><div class="card-body">
+          <p class="text-muted small">รัน setupSystem() เพื่อสร้าง Sheets และค่าเริ่มต้นใน Google Sheets</p>
+          <button class="btn btn-outline-primary" onclick="doSetupSystem()"><i class="bi bi-tools"></i> Setup System</button>
+        </div></div>
+      </div>
+    </div>`;
+  }
+
+  async function saveGeneralSettings() {
+    const data = { SYSTEM_NAME: document.getElementById('cfgSystemName').value, ADMIN_USERNAME: document.getElementById('cfgUsername').value };
+    const res = await api('updateSystemConfig', data);
+    showToast(res.success ? res.message : res.message, res.success ? 'success' : 'error');
+  }
+
+  async function saveCSVSettings() {
+    const data = { CSV_LINE1: document.getElementById('cfgLine1').value, CSV_LINE2: document.getElementById('cfgLine2').value };
+    const res = await api('updateSystemConfig', data);
+    showToast(res.success ? res.message : res.message, res.success ? 'success' : 'error');
+  }
+
+  async function doChangePassword() {
+    const oldPw = document.getElementById('cfgOldPw').value;
+    const newPw = document.getElementById('cfgNewPw').value;
+    const confirmPw = document.getElementById('cfgConfirmPw').value;
+    if (newPw !== confirmPw) { showToast('รหัสผ่านใหม่ไม่ตรงกัน', 'warning'); return; }
+    if (newPw.length < 6) { showToast('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', 'warning'); return; }
+    showLoading('กำลังเปลี่ยนรหัสผ่าน...');
+    const res = await api('changePassword', { oldPassword: oldPw, newPassword: newPw });
+    hideLoading();
+    showToast(res.message, res.success ? 'success' : 'error');
+    if (res.success) { document.getElementById('cfgOldPw').value = ''; document.getElementById('cfgNewPw').value = ''; document.getElementById('cfgConfirmPw').value = ''; }
+  }
+
+  async function doSetupSystem() {
+    showLoading('กำลัง Setup...');
+    const res = await api('setupSystem');
+    hideLoading();
+    showToast(res.message || 'Setup สำเร็จ', 'success');
+  }
+
+  // ===== APP STARTUP =====
+  window.addEventListener('load', async () => {
+    // จำลอง loading progress
+    await new Promise(r => setTimeout(r, 1000));
+    document.getElementById('loadingScreen').style.opacity = '0';
+    document.getElementById('loadingScreen').style.transition = 'opacity 0.5s';
+    setTimeout(() => document.getElementById('loadingScreen').style.display = 'none', 500);
+
+    applyDarkMode();
+    updateClock();
+
+    // 1. ตรวจสอบ QR Mode สำหรับบุคคลภายนอก (ไม่ต้องเข้าระบบ)
+    if (typeof QR_MODE !== 'undefined' && QR_MODE) {
+      document.body.classList.add('qr-public-mode');
+      document.getElementById('mainApp').classList.remove('d-none');
+      document.getElementById('loginModal').classList.add('d-none');
+
+      // สลับหน้าจอมาหน้า Check-in เสมอ
+      showPage('checkin');
+
+      // ดึงและแสดงข้อมูลกิจกรรมจาก QR Code บนการ์ด
+      if (typeof QR_EVENT !== 'undefined' && QR_EVENT) {
+        document.getElementById('checkinEventSelectorCard').classList.add('d-none');
+        document.getElementById('checkinEventPublicCard').classList.remove('d-none');
+        document.getElementById('publicEventName').textContent = QR_EVENT.EventName;
+        document.getElementById('publicEventDetail').innerHTML = `
+        <i class="bi bi-calendar-event me-1"></i> ${QR_EVENT.Date || '—'} 
+        <span class="mx-2">|</span> 
+        <i class="bi bi-clock me-1"></i> ${QR_EVENT.StartTime || '—'} - ${QR_EVENT.EndTime || '—'}
+        <span class="mx-2">|</span> 
+        <i class="bi bi-geo-alt me-1"></i> ${QR_EVENT.Location || '—'}`;
+
+        const select = document.getElementById('checkinEventSelect');
+        if (select) {
+          select.innerHTML = `<option value="${QR_EVENT.EventID}" selected>${QR_EVENT.EventName}</option>`;
+        }
+      }
+
+      // ซ่อนแผงตั้งค่าและปุ่มค้นหาของ Admin ในหน้านี้
+      document.getElementById('checkinMethodRow').classList.add('d-none');
+      document.getElementById('recentCheckinsCard').classList.add('d-none');
+
+      // ตั้งค่าโหมดเป็นการลงทะเบียนใหม่โดยตรง
+      setCheckinMethod('register');
+
+      // แสดง Tab สำหรับสาธารณะ (Check-in / Check-out)
+      document.getElementById('publicAttendanceTabs')?.classList.remove('d-none');
+
+      // ปรับหัวข้อของฟอร์มให้เหมาะสม
+      const formTitle = document.querySelector('#registerInputArea h5.card-title');
+      if (formTitle) {
+        formTitle.innerHTML = '<i class="bi bi-pencil-square text-primary me-2"></i>กรอกข้อมูลผู้เข้าอบรมเพื่อบันทึกเวลาเข้าร่วม';
+      }
+      return;
+    }
+
+    // 2. ตรวจสอบ Session สำหรับ Admin ปกติ
+    if (AppState.token) {
+      const res = await api('validateSession', {});
+      if (res.valid) {
+        document.getElementById('sidebarUsername').textContent = res.username || 'Admin';
+        showMainApp();
+        return;
+      } else {
+        AppState.token = null;
+        localStorage.removeItem('checkin_token');
+      }
+    }
+    // แสดง Login
+    document.getElementById('loginModal').classList.remove('d-none');
+  });
+
+  function switchToAdminLogin(e) {
+    if (e) e.preventDefault();
+    document.body.classList.remove('qr-public-mode');
+    document.getElementById('mainApp').classList.add('d-none');
+    document.getElementById('loginModal').classList.remove('d-none');
+  }
+
+  // Resize charts on window resize
+  window.addEventListener('resize', () => {
+    if (AppState.currentPage === 'dashboard') loadDashboard();
+  });
+</script>

@@ -1,0 +1,364 @@
+<!-- Attendance.html — Check-in / Check-out UI -->
+
+<!-- ===== CHECK-IN SECTION ===== -->
+<div id="checkinSection">
+  <div class="page-header">
+    <div class="page-header-title">
+      <h4><i class="bi bi-box-arrow-in-right text-success me-2"></i>ระบบลงทะเบียนการอบรม/ประชุม/สัมมนา</h4>
+      <p>บันทึกเวลาเข้าร่วมและออกจากกิจกรรม</p>
+    </div>
+  </div>
+
+  <!-- Event Selector -->
+  <div class="card mb-3" id="checkinEventSelectorCard">
+    <div class="card-body">
+      <div class="row align-items-center g-3">
+        <div class="col-md-8">
+          <label class="form-label fw-bold">กิจกรรม <span class="text-danger">*</span></label>
+          <select class="form-select" id="checkinEventSelect">
+            <option value="">-- เลือกกิจกรรม --</option>
+          </select>
+        </div>
+        <div class="col-md-4 text-md-end">
+          <div id="checkinEventInfo" class="text-muted small"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Public Event Banner Card (Only visible in QR Mode) -->
+  <div class="card mb-3 d-none" id="checkinEventPublicCard">
+    <div class="card-body text-center py-4"
+      style="background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1)); border-radius: var(--radius);">
+      <h3 class="fw-bold text-primary mb-2" id="publicEventName">-- ชื่อกิจกรรม --</h3>
+      <p class="text-muted mb-0" id="publicEventDetail"><i class="bi bi-calendar-event me-1"></i> -- วันที่ -- | <i
+          class="bi bi-geo-alt me-1"></i> -- สถานที่ --</p>
+    </div>
+  </div>
+
+  <!-- Search Method Selector -->
+  <div class="row g-3 mb-3" id="checkinMethodRow">
+    <div class="col-6 col-md">
+      <button class="method-btn active" onclick="setCheckinMethod('name')" id="methodName">
+        <i class="bi bi-person-lines-fill"></i>
+        <span>ค้นหาชื่อ</span>
+      </button>
+    </div>
+    <div class="col-6 col-md">
+      <button class="method-btn" onclick="setCheckinMethod('phone')" id="methodPhone">
+        <i class="bi bi-telephone"></i>
+        <span>เบอร์โทร</span>
+      </button>
+    </div>
+    <div class="col-6 col-md">
+      <button class="method-btn" onclick="setCheckinMethod('pid')" id="methodPID">
+        <i class="bi bi-person-badge"></i>
+        <span>PID</span>
+      </button>
+    </div>
+    <div class="col-6 col-md">
+      <button class="method-btn" onclick="setCheckinMethod('qr')" id="methodQR">
+        <i class="bi bi-qr-code-scan"></i>
+        <span>QR Code</span>
+      </button>
+    </div>
+    <div class="col-12 col-md">
+      <button class="method-btn" onclick="setCheckinMethod('register')" id="methodRegister">
+        <i class="bi bi-person-plus-fill"></i>
+        <span>ลงทะเบียนหน้างาน</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Search / Input Card -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <!-- Name / Phone / PID Search -->
+      <div id="searchInputArea">
+        <label class="form-label fw-bold" id="searchLabel">ค้นหาชื่อ</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="text" class="form-control form-control-lg" id="checkinSearch" placeholder="พิมพ์เพื่อค้นหา..."
+            oninput="searchForCheckin()">
+          <button class="btn btn-primary" onclick="searchForCheckin()">ค้นหา</button>
+        </div>
+      </div>
+
+      <!-- QR Code Input -->
+      <div id="qrInputArea" class="d-none">
+        <label class="form-label fw-bold">สแกน QR Code หรือกรอก PID</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-qr-code"></i></span>
+          <input type="text" class="form-control form-control-lg" id="qrInput" placeholder="สแกน QR Code..." autofocus
+            onkeypress="if(event.key==='Enter') doQRCheckin()">
+          <button class="btn btn-success" onclick="doQRCheckin()">
+            <i class="bi bi-check-lg"></i> Check-in
+          </button>
+        </div>
+      </div>
+
+      <!-- On-the-spot Register Form -->
+      <div id="registerInputArea" class="d-none">
+        <!-- Public Tabs (Only shown in QR mode or public access) -->
+        <ul class="nav nav-pills nav-fill mb-4 bg-light p-1 rounded-pill d-none" id="publicAttendanceTabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active fw-bold" id="btn-public-checkin" type="button" onclick="switchPublicModeTab('checkin')">
+              <div class="tab-btn-content">
+                <span class="en-text"><i class="bi bi-box-arrow-in-right"></i> Check-in</span>
+                <span class="th-text">(ลงทะเบียน)</span>
+              </div>
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link fw-bold text-secondary" id="btn-public-checkout" type="button" onclick="switchPublicModeTab('checkout')">
+              <div class="tab-btn-content">
+                <span class="en-text"><i class="bi bi-box-arrow-right"></i> Check-out</span>
+                <span class="th-text">(ออกจากกิจกรรม)</span>
+              </div>
+            </button>
+          </li>
+        </ul>
+
+        <!-- Check-in Tab Content -->
+        <div id="publicCheckinContent">
+          <h5 class="card-title mb-3 text-primary"><i class="bi bi-person-plus-fill me-2"></i>กรอกข้อมูลลงทะเบียนและ Check-in</h5>
+          <form id="checkinRegisterForm" onsubmit="event.preventDefault(); doRegisterCheckin();">
+            <div class="row g-3">
+              <div class="col-md-2">
+                <label class="form-label fw-bold">คำนำหน้า <span class="text-danger">*</span></label>
+                <select class="form-select" id="regTitle" required>
+                  <option value="นาย">นาย</option>
+                  <option value="นาง">นาง</option>
+                  <option value="นางสาว">นางสาว</option>
+                  <option value="ดร.">ดร.</option>
+                  <option value="ผศ.">ผศ.</option>
+                  <option value="รศ.">รศ.</option>
+                  <option value="ศ.">ศ.</option>
+                </select>
+              </div>
+              <div class="col-md-5">
+                <label class="form-label fw-bold">ชื่อ <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="regFirstName" placeholder="ระบุชื่อจริง" required>
+              </div>
+              <div class="col-md-5">
+                <label class="form-label fw-bold">นามสกุล <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="regLastName" placeholder="ระบุนามสกุล" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">หน่วยงาน/องค์กร/โรงเรียน <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="regOrg" placeholder="ระบุสังกัด โรงเรียน หรือหน่วยงาน" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">ตำแหน่ง</label>
+                <input type="text" class="form-control" id="regPosition" placeholder="ระบุตำแหน่งงาน (ถ้ามี)">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">เบอร์โทรศัพท์ <span class="text-danger">*</span></label>
+                <input type="tel" class="form-control" id="regPhone" placeholder="เช่น 0891234567" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">อีเมล</label>
+                <input type="email" class="form-control" id="regEmail" placeholder="เช่น name@email.com">
+              </div>
+            </div>
+            <div class="text-end mt-4">
+              <button type="submit" class="btn btn-premium-success pulse-btn btn-lg px-5 py-3 fs-5 w-100 w-md-auto">
+                <i class="bi bi-box-arrow-in-right me-2"></i> ลงทะเบียนและ Check-in
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Check-out Tab Content -->
+        <div id="publicCheckoutContent" class="d-none">
+          <h5 class="card-title mb-3 text-warning"><i class="bi bi-box-arrow-right me-2"></i>ค้นหาเพื่อทำ Check-out</h5>
+          
+          <div class="row g-2 mb-4">
+            <div class="col-md-9 col-8">
+              <input type="text" class="form-control form-control-lg" id="publicCheckoutSearchVal" placeholder="กรอก เบอร์โทรศัพท์ หรือ ชื่อ-นามสกุล ที่ลงทะเบียนไว้" onkeypress="if(event.key==='Enter') searchParticipantForPublicCheckout()">
+            </div>
+            <div class="col-md-3 col-4">
+              <button class="btn btn-premium-warning btn-lg w-100 fw-bold" onclick="searchParticipantForPublicCheckout()">
+                <i class="bi bi-search me-1"></i> ค้นหา
+              </button>
+            </div>
+          </div>
+
+          <!-- Checkout Search Results -->
+          <div id="publicCheckoutSearchResults" class="mb-4 d-none"></div>
+
+          <!-- Checkout Form Area (Initially hidden) -->
+          <div id="publicCheckoutFormArea" class="d-none p-3 border rounded bg-light-subtle">
+            <div class="alert alert-info py-2 small mb-3">
+              <i class="bi bi-info-circle-fill me-2"></i><strong>ตรวจสอบและแก้ไขข้อมูลให้ถูกต้อง:</strong> ท่านสามารถแก้ไขตัวสะกดในฟอร์มนี้ก่อนกดยืนยันเพื่อบันทึกเวลา Check-out ได้ (ข้อมูลนี้จะปรากฏบนใบประกาศนียบัตร)
+            </div>
+            <form id="publicCheckoutForm" onsubmit="event.preventDefault(); doPublicCheckout();">
+              <input type="hidden" id="pubOutPID">
+              <div class="row g-3">
+                <div class="col-md-2">
+                  <label class="form-label fw-bold">คำนำหน้า <span class="text-danger">*</span></label>
+                  <select class="form-select" id="pubOutTitle" required>
+                    <option value="นาย">นาย</option>
+                    <option value="นาง">นาง</option>
+                    <option value="นางสาว">นางสาว</option>
+                    <option value="ดร.">ดร.</option>
+                    <option value="ผศ.">ผศ.</option>
+                    <option value="รศ.">รศ.</option>
+                    <option value="ศ.">ศ.</option>
+                  </select>
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label fw-bold">ชื่อ <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="pubOutFirstName" required>
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label fw-bold">นามสกุล <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="pubOutLastName" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">หน่วยงาน/องค์กร/โรงเรียน <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="pubOutOrg" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">ตำแหน่ง</label>
+                  <input type="text" class="form-control" id="pubOutPosition" placeholder="ระบุตำแหน่งงาน (ถ้ามี)">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">เบอร์โทรศัพท์ <span class="text-danger">*</span></label>
+                  <input type="tel" class="form-control" id="pubOutPhone" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">อีเมล</label>
+                  <input type="email" class="form-control" id="pubOutEmail" placeholder="เช่น name@email.com">
+                </div>
+                <div class="col-12">
+                  <label class="form-label fw-bold">หมายเหตุ (ถ้ามี)</label>
+                  <input type="text" class="form-control" id="pubOutRemark" placeholder="ข้อความหมายเหตุเพิ่มเติม">
+                </div>
+              </div>
+              <div class="text-end mt-4">
+                <button type="submit" class="btn btn-premium-warning pulse-btn-warning btn-lg px-5 py-3 fs-5 w-100 w-md-auto fw-bold">
+                  <i class="bi bi-check2-circle me-2"></i> ยืนยันข้อมูล & Check-out
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="text-center mt-3 mb-4">
+    <a href="#" class="text-muted small text-decoration-none opacity-50" onclick="switchToAdminLogin(event)">
+      <i class="bi bi-shield-lock me-1"></i> สำหรับผู้ดูแลระบบ (Admin)
+    </a>
+  </div>
+
+  <!-- Search Results -->
+  <div id="checkinResults" class="mb-3"></div>
+
+  <!-- Recent Check-ins -->
+  <div class="card" id="recentCheckinsCard">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <span><i class="bi bi-clock-history me-2 text-success"></i>Check-in ล่าสุด</span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadRecentCheckins()">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>ชื่อ-นามสกุล</th>
+              <th>องค์กร</th>
+              <th>เวลา Check-in</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="recentCheckinBody">
+            <tr>
+              <td colspan="5" class="text-center py-3 text-muted">เลือกกิจกรรมก่อน</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CHECK-OUT SECTION ===== -->
+<div id="checkoutSection" class="d-none">
+  <div class="page-header">
+    <div class="page-header-title">
+      <h4><i class="bi bi-box-arrow-right text-warning me-2"></i>Check Out</h4>
+      <p>บันทึกการออกจากกิจกรรม</p>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row align-items-center g-3">
+        <div class="col-md-8">
+          <label class="form-label fw-bold">กิจกรรม <span class="text-danger">*</span></label>
+          <select class="form-select" id="checkoutEventSelect">
+            <option value="">-- เลือกกิจกรรม --</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-bold">ค้นหาผู้เข้าร่วม</label>
+      <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="text" class="form-control form-control-lg" id="checkoutSearch"
+          placeholder="ค้นหาชื่อ, เบอร์โทร, PID..." oninput="searchForCheckout()">
+        <button class="btn btn-warning" onclick="searchForCheckout()">ค้นหา</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="checkoutResults" class="mb-3"></div>
+
+  <div class="card">
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <span><i class="bi bi-clock me-2 text-warning"></i>ยังไม่ Check-out</span>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-warning fw-bold" id="btnCheckoutSelected" onclick="doBatchCheckOut()" disabled>
+          <i class="bi bi-box-arrow-right me-1"></i> Check-out ที่เลือก (<span id="selectedPendingCount">0</span>)
+        </button>
+        <button class="btn btn-sm btn-warning fw-bold" id="btnCheckoutAll" onclick="doCheckOutAll()" disabled>
+          <i class="bi bi-check-all me-1"></i> Check-out ทั้งหมด
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadPendingCheckout()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th width="40" class="text-center"><input type="checkbox" id="selectAllPending" onchange="toggleSelectAllPending(this)"></th>
+              <th>#</th>
+              <th>ชื่อ-นามสกุล</th>
+              <th>องค์กร</th>
+              <th>Check-in เมื่อ</th>
+              <th>การจัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="pendingCheckoutBody">
+            <tr>
+              <td colspan="6" class="text-center py-3 text-muted">เลือกกิจกรรมก่อน</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ระบบ Check-in Check-out สำหรับการประชุม อบรม สัมมนา โดย Watpon NAN1">
+  <title>ระบบลงทะเบียนการอบรม/ประชุม/สัมมนา | Watpon NAN1</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+  <!-- SweetAlert2 -->
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+
+  <!-- Animate.css -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+
+  <!-- Custom Styles -->
+  <?!= include('Style'); ?>
+</head>
+
+<body id="appBody">
+
+  <!-- ===== LOADING SCREEN ===== -->
+  <div id="loadingScreen" class="loading-screen">
+    <div class="loading-content">
+      <div class="loading-logo">
+        <span class="material-icons-round" style="font-size:64px;color:#60A5FA;">event_available</span>
+      </div>
+      <h2 class="loading-title">ระบบลงทะเบียนการอบรม/ประชุม/สัมมนา</h2>
+      <p class="loading-subtitle">กำลังโหลดระบบ...</p>
+      <div class="loading-bar">
+        <div class="loading-progress"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LOGIN MODAL ===== -->
+  <div id="loginModal" class="login-overlay d-none">
+    <div class="login-card animate__animated animate__fadeInDown">
+      <div class="login-header">
+        <div class="login-icon">
+          <span class="material-icons-round">admin_panel_settings</span>
+        </div>
+        <h2>เข้าสู่ระบบ Admin</h2>
+        <p>ระบบ Check-in / Check-out</p>
+      </div>
+      <div class="login-body">
+        <div class="form-floating mb-3">
+          <input type="text" class="form-control" id="loginUsername" placeholder="Username" autocomplete="username">
+          <label for="loginUsername"><i class="bi bi-person"></i> ชื่อผู้ใช้</label>
+        </div>
+        <div class="form-floating mb-4 position-relative">
+          <input type="password" class="form-control" id="loginPassword" placeholder="Password"
+            autocomplete="current-password">
+          <label for="loginPassword"><i class="bi bi-lock"></i> รหัสผ่าน</label>
+          <button class="btn-toggle-pw" onclick="togglePassword()" type="button">
+            <i class="bi bi-eye" id="eyeIcon"></i>
+          </button>
+        </div>
+        <button class="btn btn-login w-100" onclick="doLogin()" id="loginBtn">
+          <span class="btn-text"><i class="bi bi-box-arrow-in-right"></i> เข้าสู่ระบบ</span>
+          <span class="btn-loading d-none"><span class="spinner-border spinner-border-sm"></span>
+            กำลังเข้าสู่ระบบ...</span>
+        </button>
+      </div>
+      <div class="login-footer">
+        <small>ระบบ Check-in / Check-out v1.0 | Watpon NAN1</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MAIN APP ===== -->
+  <div id="mainApp" class="d-none">
+
+    <!-- SIDEBAR -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <span class="material-icons-round">event_available</span>
+        </div>
+        <div class="sidebar-title">
+          <h6>Check-in / Check-out</h6>
+          <small>ระบบการประชุม อบรม</small>
+        </div>
+        <button class="sidebar-close d-lg-none" onclick="toggleSidebar()">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <!-- Event Selector -->
+      <div class="sidebar-event-selector px-3 py-2">
+        <label class="form-label text-muted small mb-1">เลือกกิจกรรม</label>
+        <select class="form-select form-select-sm" id="globalEventSelect" onchange="onEventChange()">
+          <option value="">-- ทุกกิจกรรม --</option>
+        </select>
+      </div>
+
+      <!-- Navigation -->
+      <ul class="sidebar-nav" id="sidebarNav">
+        <li class="nav-section-title">เมนูหลัก</li>
+
+        <li class="nav-item">
+          <a class="nav-link active" href="#" onclick="showPage('dashboard')" data-page="dashboard">
+            <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
+            <span class="nav-text">Dashboard</span>
+            <span class="nav-badge badge bg-primary" id="navBadgeOnline">0</span>
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('events')" data-page="events">
+            <span class="nav-icon"><i class="bi bi-calendar-event"></i></span>
+            <span class="nav-text">จัดการกิจกรรม</span>
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('participants')" data-page="participants">
+            <span class="nav-icon"><i class="bi bi-people"></i></span>
+            <span class="nav-text">ผู้เข้าร่วม</span>
+          </a>
+        </li>
+
+        <li class="nav-section-title">การเข้าร่วม</li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('checkin')" data-page="checkin">
+            <span class="nav-icon"><i class="bi bi-box-arrow-in-right"></i></span>
+            <span class="nav-text">Check In</span>
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('checkout')" data-page="checkout">
+            <span class="nav-icon"><i class="bi bi-box-arrow-right"></i></span>
+            <span class="nav-text">Check Out</span>
+          </a>
+        </li>
+
+        <li class="nav-section-title">ข้อมูล</li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('report')" data-page="report">
+            <span class="nav-icon"><i class="bi bi-file-earmark-bar-graph"></i></span>
+            <span class="nav-text">รายงาน</span>
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('export')" data-page="export">
+            <span class="nav-icon"><i class="bi bi-download"></i></span>
+            <span class="nav-text">Export CSV</span>
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showPage('settings')" data-page="settings">
+            <span class="nav-icon"><i class="bi bi-gear"></i></span>
+            <span class="nav-text">ตั้งค่าระบบ</span>
+          </a>
+        </li>
+      </ul>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <div class="user-avatar">
+            <i class="bi bi-person-circle"></i>
+          </div>
+          <div class="user-details">
+            <span class="user-name" id="sidebarUsername">Admin</span>
+            <small class="user-role">Administrator</small>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-logout" onclick="doLogout()" title="ออกจากระบบ">
+          <i class="bi bi-power"></i>
+        </button>
+      </div>
+    </nav>
+
+    <!-- SIDEBAR OVERLAY (Mobile) -->
+    <div class="sidebar-overlay d-lg-none" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main-content" id="mainContent">
+
+      <!-- TOP BAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="btn-menu-toggle" onclick="toggleSidebar()">
+            <i class="bi bi-list"></i>
+          </button>
+          <div class="breadcrumb-area">
+            <span class="topbar-title" id="pageTitle">Dashboard</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="topbar-time" id="topbarClock"></div>
+          <button class="btn-icon" onclick="refreshCurrentPage()" title="รีเฟรช">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="doLogout()">
+            <i class="bi bi-power"></i> ออกจากระบบ
+          </button>
+        </div>
+      </header>
+
+      <!-- PAGE CONTENT -->
+      <main class="page-wrapper" id="pageWrapper">
+
+        <!-- DASHBOARD PAGE -->
+        <div id="page-dashboard" class="page-section">
+          <?!= include('Dashboard'); ?>
+        </div>
+
+        <!-- EVENTS PAGE -->
+        <div id="page-events" class="page-section d-none">
+          <?!= include('Admin'); ?>
+        </div>
+
+        <!-- PARTICIPANTS PAGE -->
+        <div id="page-participants" class="page-section d-none">
+          <div id="participantsPageContent"></div>
+        </div>
+
+        <!-- CHECK-IN PAGE -->
+        <div id="page-checkin" class="page-section d-none">
+          <?!= include('Attendance-html'); ?>
+        </div>
+
+        <!-- CHECK-OUT PAGE -->
+        <div id="page-checkout" class="page-section d-none">
+          <div id="checkoutPageContent"></div>
+        </div>
+
+        <!-- REPORT PAGE -->
+        <div id="page-report" class="page-section d-none">
+          <div id="reportPageContent"></div>
+        </div>
+
+        <!-- EXPORT PAGE -->
+        <div id="page-export" class="page-section d-none">
+          <?!= include('Export-html'); ?>
+        </div>
+
+        <!-- SETTINGS PAGE -->
+        <div id="page-settings" class="page-section d-none">
+          <div id="settingsPageContent"></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
+  <!-- ===== SCRIPTS ===== -->
+  <!-- Bootstrap 5 JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- SweetAlert2 -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Google Charts -->
+  <script src="https://www.gstatic.com/charts/loader.js"></script>
+  <!-- QR Code Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- App Config -->
+  <script>
+    // ค่าที่ส่งมาจาก Server (Google Apps Script Template)
+    const APP_URL = '<?= appUrl ?>';
+    const APP_CONFIG = <?!= config ?>;
+    const QR_MODE = <?!= qrMode ? 'true' : 'false' ?>;
+    const QR_TOKEN = '<?!= qrToken ?>';
+    const QR_EVENT = <?!= qrEvent || 'null' ?>;
+  </script>
+
+  <!-- Custom Scripts -->
+  <?!= include('Script-html'); ?>
+</body>
+
+</html>

@@ -1,0 +1,117 @@
+<!-- Dashboard.html — Google Charts: Pie, Bar, Line + Stat Cards -->
+<div class="page-header">
+  <div class="page-header-title">
+    <h4><i class="bi bi-speedometer2 text-primary me-2"></i>Dashboard</h4>
+    <p>ภาพรวมการเข้าร่วมกิจกรรม</p>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <select class="form-select form-select-sm" id="dashEventFilter" onchange="loadDashboard()" style="width:220px">
+      <option value="">-- ทุกกิจกรรม --</option>
+    </select>
+    <button class="btn btn-sm btn-primary" onclick="loadDashboard()">
+      <i class="bi bi-arrow-clockwise"></i> รีเฟรช
+    </button>
+  </div>
+</div>
+
+<!-- STAT CARDS ROW -->
+<div class="row g-3 mb-4" id="statCards">
+  <div class="col-6 col-lg-3">
+    <div class="stat-card blue">
+      <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
+      <div class="stat-number" id="statTotal">—</div>
+      <div class="stat-label">ลงทะเบียนทั้งหมด</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card green">
+      <div class="stat-icon"><i class="bi bi-box-arrow-in-right"></i></div>
+      <div class="stat-number" id="statCheckedIn">—</div>
+      <div class="stat-label">Check-in แล้ว</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card purple">
+      <div class="stat-icon"><i class="bi bi-box-arrow-right"></i></div>
+      <div class="stat-number" id="statCheckedOut">—</div>
+      <div class="stat-label">Check-out แล้ว</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card orange">
+      <div class="stat-icon"><i class="bi bi-person-dash"></i></div>
+      <div class="stat-number" id="statNotArrived">—</div>
+      <div class="stat-label">ยังไม่มา</div>
+    </div>
+  </div>
+</div>
+
+<!-- RATE & NOT CHECKED OUT -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="stat-card red">
+      <div class="stat-icon"><i class="bi bi-clock-history"></i></div>
+      <div class="stat-number" id="statNotCheckOut">—</div>
+      <div class="stat-label">ยังไม่ Check-out (อยู่ในงาน)</div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div style="flex:1">
+          <div class="text-muted small mb-1">อัตราการเข้าร่วม</div>
+          <div class="stat-number" id="statRate">—%</div>
+          <div class="progress mt-2" style="height:6px">
+            <div class="progress-bar bg-primary" id="rateBar" style="width:0%;transition:width 1s ease"></div>
+          </div>
+        </div>
+        <div style="font-size:2.5rem;color:var(--primary);opacity:0.5">
+          <i class="bi bi-graph-up-arrow"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHARTS ROW -->
+<div class="row g-3 mb-4">
+  <!-- Pie Chart -->
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-pie-chart text-primary"></i>
+        <span>สัดส่วนการเข้าร่วม</span>
+      </div>
+      <div class="card-body">
+        <div id="pieChart" class="chart-container"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Bar Chart -->
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-bar-chart text-success"></i>
+        <span>ผู้เข้าร่วมรายองค์กร</span>
+      </div>
+      <div class="card-body">
+        <div id="barChart" class="chart-container"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Line Chart -->
+<div class="row g-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-graph-up text-warning"></i>
+        <span>จำนวน Check-in รายชั่วโมง</span>
+      </div>
+      <div class="card-body">
+        <div id="lineChart" class="chart-container"></div>
+      </div>
+    </div>
+  </div>
+</div>

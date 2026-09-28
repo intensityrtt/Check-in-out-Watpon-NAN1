@@ -1,0 +1,115 @@
+<!-- Export.html — Export CSV Template + Full Report -->
+<div class="page-header">
+  <div class="page-header-title">
+    <h4><i class="bi bi-download text-info me-2"></i>Export CSV</h4>
+    <p>ส่งออกข้อมูลการเข้าร่วมเป็นไฟล์ CSV</p>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- Export Template CSV -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <i class="bi bi-file-earmark-spreadsheet text-success me-2"></i>
+        Export Template (ใบลงนาม)
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          ส่งออกรายชื่อผู้ที่ Check-in แล้ว ตามรูปแบบ Template สำหรับลงนาม
+        </p>
+        <div class="form-section">
+          <div class="form-section-title"><i class="bi bi-layout-text-window me-1"></i>รูปแบบ Template</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0">
+              <thead>
+                <tr>
+                  <th>Column 1</th>
+                  <th>Column 2</th>
+                  <th>Column 3</th>
+                  <th>Column 4</th>
+                  <th>Column 5</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>ที่</td>
+                  <td>ชื่อ-นามสกุล</td>
+                  <td><span class="text-muted">(ว่าง)</span></td>
+                  <td><span class="text-info" id="previewLine1">บรรทัดที่ 1</span></td>
+                  <td><span class="text-info" id="previewLine2">บรรทัดที่ 2</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">เลือกกิจกรรม</label>
+          <select class="form-select" id="exportEventSelect">
+            <option value="">-- ทุกกิจกรรม --</option>
+          </select>
+        </div>
+        <button class="btn btn-action w-100" onclick="doExportTemplate()">
+          <i class="bi bi-download"></i> Export Template CSV
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Full Report -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <i class="bi bi-file-earmark-bar-graph text-primary me-2"></i>
+        Export รายงานเต็ม
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          ส่งออกรายงานเต็มรูปแบบ รวมข้อมูล Check-in, Check-out, ระยะเวลา, อุปกรณ์
+        </p>
+        <div class="form-section">
+          <div class="form-section-title"><i class="bi bi-table me-1"></i>คอลัมน์ที่จะ Export</div>
+          <div class="d-flex flex-wrap gap-1">
+            <span class="badge bg-secondary">ที่</span>
+            <span class="badge bg-secondary">PID</span>
+            <span class="badge bg-secondary">ชื่อ-นามสกุล</span>
+            <span class="badge bg-secondary">องค์กร</span>
+            <span class="badge bg-secondary">ตำแหน่ง</span>
+            <span class="badge bg-secondary">เบอร์โทร</span>
+            <span class="badge bg-secondary">เวลา Check-in</span>
+            <span class="badge bg-secondary">เวลา Check-out</span>
+            <span class="badge bg-secondary">ระยะเวลา</span>
+            <span class="badge bg-secondary">สถานะ</span>
+            <span class="badge bg-secondary">Browser</span>
+            <span class="badge bg-secondary">Device</span>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">เลือกกิจกรรม</label>
+          <select class="form-select" id="exportFullEventSelect">
+            <option value="">-- ทุกกิจกรรม --</option>
+          </select>
+        </div>
+        <button class="btn btn-primary w-100" onclick="doExportFull()">
+          <i class="bi bi-download"></i> Export รายงานเต็ม CSV
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview Table -->
+<div class="card mt-3" id="exportPreviewCard" style="display:none">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-eye me-2"></i>Preview ข้อมูลที่จะ Export</span>
+    <small class="text-muted" id="exportPreviewCount"></small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0" id="exportPreviewTable">
+        <thead id="exportPreviewHead"></thead>
+        <tbody id="exportPreviewBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

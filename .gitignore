@@ -1,0 +1,13 @@
+# Google Drive Virtual Files
+*.gscript
+*.gsheet
+desktop.ini
+
+# Temporary & Local Builds
+test_local.html
+*.tmp
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

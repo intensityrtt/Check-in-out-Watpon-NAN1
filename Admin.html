@@ -1,0 +1,289 @@
+<!-- Admin.html — จัดการกิจกรรม (Events CRUD) และ จัดการผู้เข้าร่วม -->
+
+<!-- ===== EVENTS MANAGEMENT ===== -->
+<div id="eventsSection">
+  <div class="page-header">
+    <div class="page-header-title">
+      <h4><i class="bi bi-calendar-event text-primary me-2"></i>จัดการกิจกรรม</h4>
+      <p>เพิ่ม แก้ไข ลบกิจกรรม</p>
+    </div>
+    <button class="btn btn-action" onclick="openAddEventModal()">
+      <i class="bi bi-plus-circle"></i> เพิ่มกิจกรรม
+    </button>
+  </div>
+
+  <div class="card">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <span><i class="bi bi-list-ul me-2"></i>รายการกิจกรรม</span>
+      <div class="search-box" style="width:240px">
+        <i class="bi bi-search search-icon"></i>
+        <input type="text" class="form-control form-control-sm" id="eventSearch" placeholder="ค้นหากิจกรรม..."
+          oninput="filterEvents()">
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0" id="eventsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>ชื่อกิจกรรม</th>
+              <th>วันที่</th>
+              <th>เวลา</th>
+              <th>สถานที่</th>
+              <th>สถานะ</th>
+              <th>QR Code</th>
+              <th>การจัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody">
+            <tr>
+              <td colspan="8" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary me-2"></div>กำลังโหลด...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PARTICIPANTS MANAGEMENT (จะถูกเรียกจาก participants page) ===== -->
+<div id="participantsSection" class="d-none">
+  <div class="page-header">
+    <div class="page-header-title">
+      <h4><i class="bi bi-people text-primary me-2"></i>จัดการผู้เข้าร่วม</h4>
+      <p>ลงทะเบียนและจัดการข้อมูลผู้เข้าร่วม</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary btn-sm" onclick="openImportModal()">
+        <i class="bi bi-upload"></i> นำเข้า CSV
+      </button>
+      <button class="btn btn-action" onclick="openAddParticipantModal()">
+        <i class="bi bi-person-plus"></i> เพิ่มผู้เข้าร่วม
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <span><i class="bi bi-list-ul me-2"></i>รายชื่อผู้เข้าร่วม</span>
+      <div class="d-flex gap-2 align-items-center">
+        <small class="text-muted" id="participantCount"></small>
+        <div class="search-box" style="width:240px">
+          <i class="bi bi-search search-icon"></i>
+          <input type="text" class="form-control form-control-sm" id="participantSearch"
+            placeholder="ค้นหาชื่อ, เบอร์, PID..." oninput="filterParticipants()">
+        </div>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0" id="participantsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>PID</th>
+              <th>ชื่อ-นามสกุล</th>
+              <th>องค์กร</th>
+              <th>ตำแหน่ง</th>
+              <th>เบอร์โทร</th>
+              <th>อีเมล</th>
+              <th>การจัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="participantsTableBody">
+            <tr>
+              <td colspan="8" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary me-2"></div>กำลังโหลด...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: เพิ่ม/แก้ไข กิจกรรม ===== -->
+<div class="modal fade" id="eventModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="eventModalTitle">
+          <i class="bi bi-calendar-plus me-2 text-primary"></i>เพิ่มกิจกรรม
+        </h5>
+        <button type="button" class="btn-close btn-close-dark" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editEventID">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">ชื่อกิจกรรม <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="evtName" placeholder="ชื่อกิจกรรม/โครงการ">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">วันที่จัดกิจกรรม</label>
+            <input type="date" class="form-control" id="evtDate">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">เวลาเริ่ม</label>
+            <input type="time" class="form-control" id="evtStart">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">เวลาสิ้นสุด</label>
+            <input type="time" class="form-control" id="evtEnd">
+          </div>
+          <div class="col-12">
+            <label class="form-label">สถานที่</label>
+            <input type="text" class="form-control" id="evtLocation" placeholder="สถานที่จัดกิจกรรม">
+          </div>
+          <div class="col-12">
+            <label class="form-label">รายละเอียด</label>
+            <textarea class="form-control" id="evtDesc" rows="3" placeholder="รายละเอียดเพิ่มเติม..."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+        <button type="button" class="btn btn-action" onclick="saveEvent()">
+          <i class="bi bi-check-circle"></i> บันทึก
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: QR Code ===== -->
+<div class="modal fade" id="qrModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-qr-code me-2 text-primary"></i>QR Code & ลิงก์ Check-in</h5>
+        <button type="button" class="btn-close btn-close-dark" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center">
+        <p class="mb-1 fw-bold fs-5" id="qrEventName"></p>
+        <p class="text-muted small mb-3" id="qrEventDate"></p>
+
+        <div class="qr-container mx-auto mb-3">
+          <div id="qrCodeImg"></div>
+        </div>
+
+        <div class="mb-3 px-3">
+          <label class="form-label text-muted small fw-bold text-success"><i class="bi bi-qr-code me-1"></i> ลิงก์หลัก (สแกนผ่าน QR Code)</label>
+          <div class="input-group mb-2">
+            <input type="text" class="form-control form-control-sm text-center" id="qrCodeUrlText" readonly>
+            <button class="btn btn-sm btn-primary" onclick="copyQRUrl()" id="btnCopyQRUrl">
+              <i class="bi bi-copy"></i> คัดลอก
+            </button>
+          </div>
+        </div>
+
+        <div class="mb-3 px-3">
+          <label class="form-label text-muted small fw-bold text-info"><i class="bi bi-link-45deg me-1"></i> ลิงก์สำรอง (ส่งต่อพิมพ์ส่งไลน์/ระบุ Event ID)</label>
+          <div class="input-group">
+            <input type="text" class="form-control form-control-sm text-center" id="directEventUrlText" readonly>
+            <button class="btn btn-sm btn-info text-white" onclick="copyDirectUrl()" id="btnCopyDirectUrl">
+              <i class="bi bi-copy"></i> คัดลอก
+            </button>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 justify-content-center">
+          <button class="btn btn-sm btn-outline-primary" onclick="printQR()">
+            <i class="bi bi-printer"></i> พิมพ์ QR Code
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: เพิ่ม/แก้ไข ผู้เข้าร่วม ===== -->
+<div class="modal fade" id="participantModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="participantModalTitle">
+          <i class="bi bi-person-plus me-2 text-primary"></i>เพิ่มผู้เข้าร่วม
+        </h5>
+        <button type="button" class="btn-close btn-close-dark" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editPID">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">คำนำหน้า</label>
+            <select class="form-select" id="pTitle">
+              <option value="นาย">นาย</option>
+              <option value="นาง">นาง</option>
+              <option value="นางสาว">นางสาว</option>
+              <option value="เด็กชาย">เด็กชาย</option>
+              <option value="เด็กหญิง">เด็กหญิง</option>
+              <option value="ดร.">ดร.</option>
+              <option value="ผศ.ดร.">ผศ.ดร.</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">ชื่อ <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="pFirst" placeholder="ชื่อ">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">นามสกุล <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="pLast" placeholder="นามสกุล">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">องค์กร/หน่วยงาน</label>
+            <input type="text" class="form-control" id="pOrg" placeholder="ชื่อองค์กร">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">ตำแหน่ง</label>
+            <input type="text" class="form-control" id="pPos" placeholder="ตำแหน่งงาน">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">เบอร์โทร</label>
+            <input type="tel" class="form-control" id="pPhone" placeholder="0812345678">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">อีเมล</label>
+            <input type="email" class="form-control" id="pEmail" placeholder="email@example.com">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+        <button type="button" class="btn btn-action" onclick="saveParticipant()">
+          <i class="bi bi-check-circle"></i> บันทึก
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: Import CSV ===== -->
+<div class="modal fade" id="importModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2 text-primary"></i>นำเข้าข้อมูลจาก CSV</h5>
+        <button type="button" class="btn-close btn-close-dark" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info">
+          <small><strong>รูปแบบ CSV:</strong> Title, FirstName, LastName, Organization, Position, Email, Phone</small>
+        </div>
+        <label class="form-label">เลือกไฟล์ CSV</label>
+        <input type="file" class="form-control" id="csvFile" accept=".csv">
+        <div id="importPreview" class="mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+        <button type="button" class="btn btn-action" onclick="doImportCSV()">
+          <i class="bi bi-upload"></i> นำเข้าข้อมูล
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
