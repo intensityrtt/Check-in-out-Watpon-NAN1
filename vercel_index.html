@@ -1612,9 +1612,9 @@
     <p>ภาพรวมการเข้าร่วมกิจกรรม</p>
   </div>
   <div class="d-flex gap-2 align-items-center">
-    <select class="form-select form-select-sm" id="dashEventFilter" onchange="loadDashboard()" style="width:220px">
-      <option value="">-- ทุกกิจกรรม --</option>
-    </select>
+    <span class="badge bg-light text-primary border d-inline-flex align-items-center gap-1 py-2 px-3" id="dashActiveEventBadge" style="font-size: 0.88rem; font-weight: 500;">
+      <i class="bi bi-calendar-check text-primary"></i> <span id="dashActiveEventText">ทุกกิจกรรม</span>
+    </span>
     <button class="btn btn-sm btn-primary" onclick="loadDashboard()">
       <i class="bi bi-arrow-clockwise"></i> รีเฟรช
     </button>
@@ -2798,7 +2798,7 @@
 
   // ===== POPULATE EVENT DROPDOWNS =====
   function populateEventSelectors() {
-    const selects = ['globalEventSelect', 'dashEventFilter', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
+    const selects = ['globalEventSelect', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
     selects.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -2812,16 +2812,39 @@
       });
       el.value = val;
     });
+    updateActiveEventDisplay();
+  }
+
+  function updateActiveEventDisplay() {
+    const textEl = document.getElementById('dashActiveEventText');
+    if (!textEl) return;
+    const selectedId = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
+    if (!selectedId) {
+      textEl.textContent = 'ทุกกิจกรรม';
+      return;
+    }
+    const ev = (AppState.events || []).find(e => e.EventID === selectedId);
+    textEl.textContent = ev ? `${ev.EventName} (${ev.Date || '—'})` : 'ทุกกิจกรรม';
   }
 
   function onEventChange() {
     AppState.selectedEventID = document.getElementById('globalEventSelect').value;
+    updateActiveEventDisplay();
+    // ซิงค์ไปยังตัวเลือกกิจกรรมในหน้าอื่นๆ อัตโนมัติ
+    ['checkinEventSelect', 'checkoutEventSelect', 'reportEventSelect', 'exportEventSelect', 'exportFullEventSelect'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = AppState.selectedEventID;
+    });
     if (AppState.currentPage === 'dashboard') loadDashboard();
+    else if (AppState.currentPage === 'checkin') loadRecentCheckins();
+    else if (AppState.currentPage === 'checkout') loadPendingCheckout();
+    else if (AppState.currentPage === 'report') loadReportData();
   }
 
   // ===== DASHBOARD =====
   async function loadDashboard() {
-    const eventID = document.getElementById('dashEventFilter')?.value || AppState.selectedEventID;
+    const eventID = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
+    updateActiveEventDisplay();
     const res = await api('getDashboardStats', { eventID });
     if (!res.success) { showToast(res.message, 'error'); return; }
     const s = res.stats;

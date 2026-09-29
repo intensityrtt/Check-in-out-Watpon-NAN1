@@ -213,7 +213,7 @@
 
   // ===== POPULATE EVENT DROPDOWNS =====
   function populateEventSelectors() {
-    const selects = ['globalEventSelect', 'dashEventFilter', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
+    const selects = ['globalEventSelect', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
     selects.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -227,16 +227,39 @@
       });
       el.value = val;
     });
+    updateActiveEventDisplay();
+  }
+
+  function updateActiveEventDisplay() {
+    const textEl = document.getElementById('dashActiveEventText');
+    if (!textEl) return;
+    const selectedId = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
+    if (!selectedId) {
+      textEl.textContent = 'ทุกกิจกรรม';
+      return;
+    }
+    const ev = (AppState.events || []).find(e => e.EventID === selectedId);
+    textEl.textContent = ev ? `${ev.EventName} (${ev.Date || '—'})` : 'ทุกกิจกรรม';
   }
 
   function onEventChange() {
     AppState.selectedEventID = document.getElementById('globalEventSelect').value;
+    updateActiveEventDisplay();
+    // ซิงค์ไปยังตัวเลือกกิจกรรมในหน้าอื่นๆ อัตโนมัติ
+    ['checkinEventSelect', 'checkoutEventSelect', 'reportEventSelect', 'exportEventSelect', 'exportFullEventSelect'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = AppState.selectedEventID;
+    });
     if (AppState.currentPage === 'dashboard') loadDashboard();
+    else if (AppState.currentPage === 'checkin') loadRecentCheckins();
+    else if (AppState.currentPage === 'checkout') loadPendingCheckout();
+    else if (AppState.currentPage === 'report') loadReportData();
   }
 
   // ===== DASHBOARD =====
   async function loadDashboard() {
-    const eventID = document.getElementById('dashEventFilter')?.value || AppState.selectedEventID;
+    const eventID = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
+    updateActiveEventDisplay();
     const res = await api('getDashboardStats', { eventID });
     if (!res.success) { showToast(res.message, 'error'); return; }
     const s = res.stats;
