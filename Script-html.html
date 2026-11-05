@@ -551,11 +551,60 @@
     renderParticipantsTable(filtered);
   }
 
+  // ===== TITLE / PREFIX HELPER =====
+  function toggleTitleOther(selectId, otherInputId) {
+    const selectEl = document.getElementById(selectId);
+    const otherEl = document.getElementById(otherInputId);
+    if (!selectEl || !otherEl) return;
+    if (selectEl.value === 'other') {
+      otherEl.classList.remove('d-none');
+      otherEl.required = true;
+      otherEl.focus();
+    } else {
+      otherEl.classList.add('d-none');
+      otherEl.required = false;
+      otherEl.value = '';
+    }
+  }
+
+  function getTitleValue(selectId, otherInputId) {
+    const selectEl = document.getElementById(selectId);
+    const otherEl = document.getElementById(otherInputId);
+    if (!selectEl) return 'นาย';
+    if (selectEl.value === 'other') {
+      return otherEl ? otherEl.value.trim() : '';
+    }
+    return selectEl.value;
+  }
+
+  function setTitleValue(selectId, otherInputId, titleVal) {
+    const selectEl = document.getElementById(selectId);
+    const otherEl = document.getElementById(otherInputId);
+    if (!selectEl) return;
+    const val = (titleVal || 'นาย').trim();
+    const hasStandardOption = Array.from(selectEl.options).some(opt => opt.value !== 'other' && opt.value === val);
+    if (hasStandardOption) {
+      selectEl.value = val;
+      if (otherEl) {
+        otherEl.classList.add('d-none');
+        otherEl.required = false;
+        otherEl.value = '';
+      }
+    } else {
+      selectEl.value = 'other';
+      if (otherEl) {
+        otherEl.classList.remove('d-none');
+        otherEl.required = true;
+        otherEl.value = val;
+      }
+    }
+  }
+
   function openAddParticipantModal() {
     document.getElementById('editPID').value = '';
     document.getElementById('participantModalTitle').innerHTML = '<i class="bi bi-person-plus me-2 text-primary"></i>เพิ่มผู้เข้าร่วม';
     ['pFirst', 'pLast', 'pOrg', 'pPos', 'pPhone', 'pEmail'].forEach(id => document.getElementById(id).value = '');
-    document.getElementById('pTitle').value = 'นาย';
+    setTitleValue('pTitle', 'pTitleOther', 'นาย');
     new bootstrap.Modal(document.getElementById('participantModal')).show();
   }
 
@@ -564,7 +613,7 @@
     if (!p) return;
     document.getElementById('editPID').value = pid;
     document.getElementById('participantModalTitle').innerHTML = '<i class="bi bi-pencil me-2 text-primary"></i>แก้ไขผู้เข้าร่วม';
-    document.getElementById('pTitle').value = p.Title;
+    setTitleValue('pTitle', 'pTitleOther', p.Title);
     document.getElementById('pFirst').value = p.FirstName;
     document.getElementById('pLast').value = p.LastName;
     document.getElementById('pOrg').value = p.Organization;
@@ -576,9 +625,15 @@
 
   async function saveParticipant() {
     const pid = document.getElementById('editPID').value;
+    const titleVal = getTitleValue('pTitle', 'pTitleOther');
+    if (!titleVal) {
+      showToast('กรุณาระบุคำนำหน้าชื่อ', 'warning');
+      document.getElementById('pTitleOther')?.focus();
+      return;
+    }
     const data = {
       PID: pid,
-      Title: document.getElementById('pTitle').value,
+      Title: titleVal,
       FirstName: document.getElementById('pFirst').value.trim(),
       LastName: document.getElementById('pLast').value.trim(),
       Organization: document.getElementById('pOrg').value.trim(),
@@ -715,8 +770,15 @@
     const eventID = document.getElementById('checkinEventSelect').value;
     if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
 
+    const titleVal = getTitleValue('regTitle', 'regTitleOther');
+    if (!titleVal) {
+      showToast('กรุณาระบุคำนำหน้าชื่อ', 'warning');
+      document.getElementById('regTitleOther')?.focus();
+      return;
+    }
+
     const participantData = {
-      Title: document.getElementById('regTitle').value,
+      Title: titleVal,
       FirstName: document.getElementById('regFirstName').value.trim(),
       LastName: document.getElementById('regLastName').value.trim(),
       Organization: document.getElementById('regOrg').value.trim(),
@@ -747,6 +809,7 @@
         showConfirmButton: false
       });
       document.getElementById('checkinRegisterForm').reset();
+      toggleTitleOther('regTitle', 'regTitleOther');
 
       // โหลดข้อมูลประวัติใหม่เฉพาะสำหรับ Admin เท่านั้น (ไม่ใช่ QR Mode บุคคลทั่วไป)
       if (typeof QR_MODE === 'undefined' || !QR_MODE) {
@@ -847,7 +910,7 @@
     const p = JSON.parse(decodeURIComponent(pStr));
     // Fill the checkout form
     document.getElementById('pubOutPID').value = p.PID;
-    document.getElementById('pubOutTitle').value = p.Title || 'นาย';
+    setTitleValue('pubOutTitle', 'pubOutTitleOther', p.Title || 'นาย');
     document.getElementById('pubOutFirstName').value = p.FirstName || '';
     document.getElementById('pubOutLastName').value = p.LastName || '';
     document.getElementById('pubOutOrg').value = p.Organization || '';
@@ -868,10 +931,17 @@
       return;
     }
 
+    const titleVal = getTitleValue('pubOutTitle', 'pubOutTitleOther');
+    if (!titleVal) {
+      showToast('กรุณาระบุคำนำหน้าชื่อ', 'warning');
+      document.getElementById('pubOutTitleOther')?.focus();
+      return;
+    }
+
     const data = {
       pid: document.getElementById('pubOutPID').value,
       eventID: eventID,
-      title: document.getElementById('pubOutTitle').value,
+      title: titleVal,
       firstName: document.getElementById('pubOutFirstName').value.trim(),
       lastName: document.getElementById('pubOutLastName').value.trim(),
       organization: document.getElementById('pubOutOrg').value.trim(),
@@ -898,6 +968,7 @@
       
       // Clear forms
       document.getElementById('publicCheckoutForm').reset();
+      toggleTitleOther('pubOutTitle', 'pubOutTitleOther');
       document.getElementById('publicCheckoutFormArea').classList.add('d-none');
       document.getElementById('publicCheckoutSearchVal').value = '';
     } else {

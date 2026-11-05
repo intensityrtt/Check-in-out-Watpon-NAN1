@@ -126,7 +126,7 @@
             <div class="row g-3">
               <div class="col-md-2">
                 <label class="form-label fw-bold">คำนำหน้า <span class="text-danger">*</span></label>
-                <select class="form-select" id="regTitle" required>
+                <select class="form-select" id="regTitle" onchange="toggleTitleOther('regTitle', 'regTitleOther')" required>
                   <option value="นาย">นาย</option>
                   <option value="นาง">นาง</option>
                   <option value="นางสาว">นางสาว</option>
@@ -134,7 +134,9 @@
                   <option value="ผศ.">ผศ.</option>
                   <option value="รศ.">รศ.</option>
                   <option value="ศ.">ศ.</option>
+                  <option value="other">อื่น ๆ โปรดระบุ</option>
                 </select>
+                <input type="text" class="form-control mt-2 d-none" id="regTitleOther" placeholder="โปรดระบุคำนำหน้า">
               </div>
               <div class="col-md-5">
                 <label class="form-label fw-bold">ชื่อ <span class="text-danger">*</span></label>
@@ -197,7 +199,7 @@
               <div class="row g-3">
                 <div class="col-md-2">
                   <label class="form-label fw-bold">คำนำหน้า <span class="text-danger">*</span></label>
-                  <select class="form-select" id="pubOutTitle" required>
+                  <select class="form-select" id="pubOutTitle" onchange="toggleTitleOther('pubOutTitle', 'pubOutTitleOther')" required>
                     <option value="นาย">นาย</option>
                     <option value="นาง">นาง</option>
                     <option value="นางสาว">นางสาว</option>
@@ -205,7 +207,9 @@
                     <option value="ผศ.">ผศ.</option>
                     <option value="รศ.">รศ.</option>
                     <option value="ศ.">ศ.</option>
+                    <option value="other">อื่น ๆ โปรดระบุ</option>
                   </select>
+                  <input type="text" class="form-control mt-2 d-none" id="pubOutTitleOther" placeholder="โปรดระบุคำนำหน้า">
                 </div>
                 <div class="col-md-5">
                   <label class="form-label fw-bold">ชื่อ <span class="text-danger">*</span></label>

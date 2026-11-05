@@ -216,15 +216,20 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">คำนำหน้า</label>
-            <select class="form-select" id="pTitle">
+            <select class="form-select" id="pTitle" onchange="toggleTitleOther('pTitle', 'pTitleOther')">
               <option value="นาย">นาย</option>
               <option value="นาง">นาง</option>
               <option value="นางสาว">นางสาว</option>
               <option value="เด็กชาย">เด็กชาย</option>
               <option value="เด็กหญิง">เด็กหญิง</option>
               <option value="ดร.">ดร.</option>
+              <option value="ผศ.">ผศ.</option>
+              <option value="รศ.">รศ.</option>
+              <option value="ศ.">ศ.</option>
               <option value="ผศ.ดร.">ผศ.ดร.</option>
+              <option value="other">อื่น ๆ โปรดระบุ</option>
             </select>
+            <input type="text" class="form-control mt-2 d-none" id="pTitleOther" placeholder="โปรดระบุคำนำหน้า">
           </div>
           <div class="col-md-4">
             <label class="form-label">ชื่อ <span class="text-danger">*</span></label>
