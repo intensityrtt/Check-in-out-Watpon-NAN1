@@ -149,32 +149,68 @@ function toggleEventStatus(token, eventID) {
 // ส่วนที่ 2: จัดการ Sheet Participants (ผู้เข้าร่วม)
 // ============================================================
 
-function getAllParticipants() {
+function getAllParticipants(eventID) {
   try {
     const sheet = getSheet(CONFIG.SHEET_PARTICIPANTS);
     const lastRow = sheet.getLastRow();
     if (lastRow <= 1) return { success: true, data: [] };
-    const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
-    const participants = data
+    const lastCol = Math.max(10, sheet.getLastColumn());
+    const data = sheet.getRange(2, 1, lastRow - 1, Math.min(11, lastCol)).getValues();
+
+    // ดึงข้อมูลการเข้าร่วมจาก Sheet Attendance เพื่อเชื่อมโยงผู้เข้าร่วมกับแต่ละกิจกรรม (รองรับข้อมูลเดิมที่ยังไม่มีคอลัมน์ EventID)
+    const attEventsByPID = {};
+    try {
+      const aSheet = getSheet(CONFIG.SHEET_ATTENDANCE);
+      const aLastRow = aSheet.getLastRow();
+      if (aLastRow > 1) {
+        const aData = aSheet.getRange(2, 1, aLastRow - 1, 2).getValues();
+        for (let i = 0; i < aData.length; i++) {
+          const pidKey = String(aData[i][0] || "").trim();
+          const evKey = String(aData[i][1] || "").trim();
+          if (pidKey && evKey) {
+            if (!attEventsByPID[pidKey]) attEventsByPID[pidKey] = [];
+            if (!attEventsByPID[pidKey].includes(evKey)) {
+              attEventsByPID[pidKey].push(evKey);
+            }
+          }
+        }
+      }
+    } catch (attErr) {}
+
+    let participants = data
       .filter(row => row[0] && row[9] !== "deleted")
-      .map(row => ({
-        PID: row[0], Title: row[1],
-        FirstName: row[2], LastName: row[3],
-        FullName: `${row[1]}${row[2]} ${row[3]}`,
-        Organization: row[4], Position: row[5],
-        Email: row[6], Phone: row[7],
-        CreatedAt: row[8] ? formatDateTime(row[8]) : "",
-        Status: row[9] || "active"
-      }));
+      .map(row => {
+        const pidStr = String(row[0]).trim();
+        const colEventID = row[10] ? String(row[10]).trim() : "";
+        const attendedEvents = attEventsByPID[pidStr] || [];
+        const allEventIDs = Array.from(new Set([colEventID, ...attendedEvents].filter(Boolean)));
+        return {
+          PID: row[0], Title: row[1],
+          FirstName: row[2], LastName: row[3],
+          FullName: `${row[1]}${row[2]} ${row[3]}`,
+          Organization: row[4], Position: row[5],
+          Email: row[6], Phone: row[7],
+          CreatedAt: row[8] ? formatDateTime(row[8]) : "",
+          Status: row[9] || "active",
+          EventID: colEventID || (attendedEvents[0] || ""),
+          EventIDs: allEventIDs
+        };
+      });
+
+    if (eventID && String(eventID).trim() !== "") {
+      const targetEv = String(eventID).trim();
+      participants = participants.filter(p => p.EventIDs && p.EventIDs.includes(targetEv));
+    }
+
     return { success: true, data: participants };
   } catch (e) { return { success: false, message: e.message, data: [] }; }
 }
 
-function searchParticipants(query) {
+function searchParticipants(query, eventID) {
   try {
-    const result = getAllParticipants();
+    const result = getAllParticipants(eventID);
     if (!result.success) return result;
-    const q = query.toLowerCase().trim();
+    const q = (query || "").toLowerCase().trim();
     const filtered = result.data.filter(p => {
       const pid = String(p.PID || "").toLowerCase();
       const firstName = String(p.FirstName || "").toLowerCase();
@@ -199,14 +235,16 @@ function getParticipantByPID(pid) {
     const sheet = getSheet(CONFIG.SHEET_PARTICIPANTS);
     const lastRow = sheet.getLastRow();
     if (lastRow <= 1) return null;
-    const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
-    const row = data.find(r => r[0] === pid && r[9] !== "deleted");
+    const lastCol = Math.max(10, sheet.getLastColumn());
+    const data = sheet.getRange(2, 1, lastRow - 1, Math.min(11, lastCol)).getValues();
+    const row = data.find(r => String(r[0]) === String(pid) && r[9] !== "deleted");
     if (!row) return null;
     return {
       PID: row[0], Title: row[1], FirstName: row[2], LastName: row[3],
       FullName: `${row[1]}${row[2]} ${row[3]}`,
       Organization: row[4], Position: row[5],
-      Email: row[6], Phone: row[7], Status: row[9] || "active"
+      Email: row[6], Phone: row[7], Status: row[9] || "active",
+      EventID: row[10] ? String(row[10]).trim() : ""
     };
   } catch (e) { return null; }
 }
@@ -215,13 +253,17 @@ function addParticipant(token, participantData) {
   if (!isAuthenticated(token)) return { success: false, message: "Session หมดอายุ" };
   try {
     const sheet = getSheet(CONFIG.SHEET_PARTICIPANTS);
+    if (sheet.getLastColumn() < 11) {
+      sheet.getRange(1, 11).setValue("EventID");
+    }
     const pid = generateID("PID");
     sheet.appendRow([
       pid, participantData.Title || "",
       participantData.FirstName || "", participantData.LastName || "",
       participantData.Organization || "", participantData.Position || "",
       participantData.Email || "", formatPhoneForSheet(participantData.Phone),
-      new Date(), "active"
+      new Date(), "active",
+      participantData.EventID || ""
     ]);
     return { success: true, message: "เพิ่มผู้เข้าร่วมสำเร็จ", pid: pid };
   } catch (e) { return { success: false, message: e.message }; }
@@ -235,7 +277,7 @@ function updateParticipant(token, pid, data) {
     const pids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     let rowIndex = -1;
     for (let i = 0; i < pids.length; i++) {
-      if (pids[i][0] === pid) { rowIndex = i + 2; break; }
+      if (String(pids[i][0]) === String(pid)) { rowIndex = i + 2; break; }
     }
     if (rowIndex === -1) return { success: false, message: "ไม่พบผู้เข้าร่วม" };
     sheet.getRange(rowIndex, 2).setValue(data.Title || "");
@@ -245,6 +287,12 @@ function updateParticipant(token, pid, data) {
     sheet.getRange(rowIndex, 6).setValue(data.Position || "");
     sheet.getRange(rowIndex, 7).setValue(data.Email || "");
     sheet.getRange(rowIndex, 8).setValue(formatPhoneForSheet(data.Phone));
+    if (data.EventID !== undefined) {
+      if (sheet.getLastColumn() < 11) {
+        sheet.getRange(1, 11).setValue("EventID");
+      }
+      sheet.getRange(rowIndex, 11).setValue(data.EventID || "");
+    }
     return { success: true, message: "แก้ไขข้อมูลสำเร็จ" };
   } catch (e) { return { success: false, message: e.message }; }
 }
@@ -256,7 +304,7 @@ function deleteParticipant(token, pid) {
     const lastRow = sheet.getLastRow();
     const pids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     for (let i = 0; i < pids.length; i++) {
-      if (pids[i][0] === pid) {
+      if (String(pids[i][0]) === String(pid)) {
         sheet.getRange(i + 2, 10).setValue("deleted");
         return { success: true, message: "ลบผู้เข้าร่วมสำเร็จ" };
       }
@@ -265,18 +313,62 @@ function deleteParticipant(token, pid) {
   } catch (e) { return { success: false, message: e.message }; }
 }
 
+function importParticipantsFromCSV(token, csvData, eventID) {
+  if (!isAuthenticated(token)) return { success: false, message: "Session หมดอายุ" };
+  if (!csvData || !csvData.length) return { success: false, message: "ไม่พบข้อมูลในไฟล์ CSV" };
+  try {
+    const sheet = getSheet(CONFIG.SHEET_PARTICIPANTS);
+    if (sheet.getLastColumn() < 11) {
+      sheet.getRange(1, 11).setValue("EventID");
+    }
+    const now = new Date();
+    let count = 0;
+    const rows = [];
+    for (let i = 0; i < csvData.length; i++) {
+      const item = csvData[i];
+      if (!item.FirstName && !item.LastName) continue;
+      const pid = generateID("PID") + String(i).padStart(2, "0");
+      rows.push([
+        pid,
+        item.Title || "นาย",
+        item.FirstName || "",
+        item.LastName || "",
+        item.Organization || "",
+        item.Position || "",
+        item.Email || "",
+        formatPhoneForSheet(item.Phone || ""),
+        now,
+        "active",
+        eventID || item.EventID || ""
+      ]);
+      count++;
+    }
+    if (rows.length > 0) {
+      const startRow = sheet.getLastRow() + 1;
+      sheet.getRange(startRow, 1, rows.length, 11).setValues(rows);
+    }
+    return { success: true, message: `นำเข้าข้อมูลผู้เข้าร่วมสำเร็จ ${count} รายการ`, count: count };
+  } catch (e) {
+    return { success: false, message: "เกิดข้อผิดพลาดในการนำเข้า: " + e.message };
+  }
+}
+
 // ============================================================
 // ส่วนที่ 3: จัดการ Sheet Attendance (การเข้าร่วม)
 // ============================================================
 
 function getAttendanceByEvent(eventID) {
   try {
+    if (!eventID || String(eventID).trim() === "") {
+      return getAllAttendance();
+    }
+    const targetEv = String(eventID).trim();
     const sheet = getSheet(CONFIG.SHEET_ATTENDANCE);
     const lastRow = sheet.getLastRow();
     if (lastRow <= 1) return { success: true, data: [] };
     const data = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
     const attendance = data
-      .filter(row => row[0] && row[1] === eventID)
+      .filter(row => row[0] && String(row[1]).trim() === targetEv)
       .map(row => ({
         PID: row[0], EventID: row[1],
         CheckInTime: row[2] ? formatDateTime(row[2]) : "",

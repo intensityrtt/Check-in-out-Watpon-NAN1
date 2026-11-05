@@ -166,8 +166,8 @@ function checkInByQR(qrToken, pid, deviceInfo) {
  */
 function getDashboardStats(eventID) {
   try {
-    const participantsResult = getAllParticipants();
-    const totalParticipants = participantsResult.success ? participantsResult.data.length : 0;
+    const participantsResult = getAllParticipants(eventID);
+    const participantsList = participantsResult.success ? participantsResult.data : [];
 
     let attendanceData = [];
     if (eventID) {
@@ -181,13 +181,14 @@ function getDashboardStats(eventID) {
     const checkedIn = attendanceData.filter(a => a.Status === "checked-in" || a.Status === "checked-out").length;
     const checkedOut = attendanceData.filter(a => a.Status === "checked-out").length;
     const notCheckedOut = attendanceData.filter(a => a.Status === "checked-in").length;
-    const notArrived = totalParticipants - checkedIn;
+    const totalParticipants = Math.max(participantsList.length, checkedIn);
+    const notArrived = Math.max(0, totalParticipants - checkedIn);
 
     // สถิติ Check-in รายชั่วโมง (สำหรับ Line Chart)
     const hourlyData = buildHourlyData(attendanceData);
 
     // สถิติรายองค์กร (สำหรับ Bar Chart)
-    const orgData = buildOrgData(attendanceData, participantsResult.data || []);
+    const orgData = buildOrgData(attendanceData, participantsList);
 
     return {
       success: true,
@@ -270,8 +271,14 @@ function getFullAttendanceReport(token, eventID) {
   if (!isAuthenticated(token)) return { success: false, message: "Session หมดอายุ" };
 
   try {
-    const participantsResult = getAllParticipants();
+    const participantsResult = getAllParticipants(eventID);
     const participants = participantsResult.success ? participantsResult.data : [];
+
+    const eventsResult = getAllEvents();
+    const eventMap = {};
+    if (eventsResult.success) {
+      eventsResult.data.forEach(ev => { eventMap[String(ev.EventID)] = ev.EventName; });
+    }
 
     let attendanceData = [];
     if (eventID) {
@@ -290,33 +297,82 @@ function getFullAttendanceReport(token, eventID) {
     }
 
     // รวมข้อมูล
-    const report = participants.map((p, index) => {
-      const key = `${p.PID}_${eventID || ""}`;
-      const att = eventID ? attMap[key] : null;
-
-      // ถ้าไม่ระบุ Event ให้หาจาก attendance ทุกรายการ
-      const attendances = eventID ? [att].filter(Boolean) :
-        attendanceData.filter(a => a.PID === p.PID);
-
-      return {
-        no: index + 1,
-        PID: p.PID,
-        Title: p.Title,
-        FirstName: p.FirstName,
-        LastName: p.LastName,
-        FullName: p.FullName,
-        Organization: p.Organization,
-        Position: p.Position,
-        Phone: p.Phone,
-        Email: p.Email,
-        CheckInTime: att ? att.CheckInTime : (attendances[0] ? attendances[0].CheckInTime : ""),
-        CheckOutTime: att ? att.CheckOutTime : (attendances[0] ? attendances[0].CheckOutTime : ""),
-        Duration: att ? att.Duration : (attendances[0] ? attendances[0].Duration : ""),
-        Status: att ? att.Status : (attendances.length > 0 ? attendances[0].Status : "not-arrived"),
-        Browser: att ? att.Browser : "",
-        Device: att ? att.Device : ""
-      };
-    });
+    const report = [];
+    let counter = 1;
+    for (const p of participants) {
+      if (eventID) {
+        const key = `${p.PID}_${eventID}`;
+        const att = attMap[key] || null;
+        report.push({
+          no: counter++,
+          PID: p.PID,
+          EventID: eventID,
+          EventName: eventMap[String(eventID)] || "",
+          Title: p.Title,
+          FirstName: p.FirstName,
+          LastName: p.LastName,
+          FullName: p.FullName,
+          Organization: p.Organization,
+          Position: p.Position,
+          Phone: p.Phone,
+          Email: p.Email,
+          CheckInTime: att ? att.CheckInTime : "",
+          CheckOutTime: att ? att.CheckOutTime : "",
+          Duration: att ? att.Duration : "",
+          Status: att ? att.Status : "not-arrived",
+          Browser: att ? att.Browser : "",
+          Device: att ? att.Device : ""
+        });
+      } else {
+        const attendances = attendanceData.filter(a => String(a.PID) === String(p.PID));
+        if (attendances.length > 0) {
+          for (const att of attendances) {
+            report.push({
+              no: counter++,
+              PID: p.PID,
+              EventID: att.EventID,
+              EventName: eventMap[String(att.EventID)] || "",
+              Title: p.Title,
+              FirstName: p.FirstName,
+              LastName: p.LastName,
+              FullName: p.FullName,
+              Organization: p.Organization,
+              Position: p.Position,
+              Phone: p.Phone,
+              Email: p.Email,
+              CheckInTime: att.CheckInTime || "",
+              CheckOutTime: att.CheckOutTime || "",
+              Duration: att.Duration || "",
+              Status: att.Status || "checked-in",
+              Browser: att.Browser || "",
+              Device: att.Device || ""
+            });
+          }
+        } else {
+          const evId = p.EventID || "";
+          report.push({
+            no: counter++,
+            PID: p.PID,
+            EventID: evId,
+            EventName: eventMap[String(evId)] || "",
+            Title: p.Title,
+            FirstName: p.FirstName,
+            LastName: p.LastName,
+            FullName: p.FullName,
+            Organization: p.Organization,
+            Position: p.Position,
+            Phone: p.Phone,
+            Email: p.Email,
+            CheckInTime: "",
+            CheckOutTime: "",
+            Duration: "",
+            Status: "not-arrived",
+            Browser: "",
+            Device: ""
+          });
+        }
+      }
+    }
 
     return { success: true, data: report };
   } catch (e) {
@@ -340,18 +396,30 @@ function registerAndCheckIn(params) {
 
     const formattedPhone = formatPhoneForSheet(participantData.Phone);
 
-    // 1. ค้นหาผู้เข้าร่วมจากเบอร์โทรศัพท์ในฐานข้อมูลหลัก (Participants) เพื่อป้องกันข้อมูลซ้ำซ้อนและแยกฐานข้อมูลรายกิจกรรมอย่างถูกต้อง
+    // 1. ค้นหาผู้เข้าร่วมจากเบอร์โทรศัพท์เฉพาะในกิจกรรมนี้ (EventID เดียวกัน) เพื่อให้ข้อมูลผู้เข้าอบรมแยกกันเป็นงาน ๆ ไปอย่างอิสระ
     let pid = null;
     let existingParticipantRowIndex = -1;
     const pSheet = getSheet(CONFIG.SHEET_PARTICIPANTS);
+    if (pSheet.getLastColumn() < 11) {
+      pSheet.getRange(1, 11).setValue("EventID");
+    }
     const lastRow = pSheet.getLastRow();
     
+    // ดึง PIDs ที่มีการเช็คอินในกิจกรรมนี้แล้ว (สำหรับข้อมูลเก่าที่ยังไม่มี EventID ในชีต Participants)
+    const eventAttResult = getAttendanceByEvent(eventID);
+    const eventAttPIDs = new Set((eventAttResult.data || []).map(a => String(a.PID)));
+
     if (lastRow > 1) {
-      const pData = pSheet.getRange(2, 1, lastRow - 1, 10).getValues();
+      const pData = pSheet.getRange(2, 1, lastRow - 1, 11).getValues();
       for (let i = 0; i < pData.length; i++) {
+        const rowPid = String(pData[i][0]);
         const rowPhone = formatPhoneForSheet(pData[i][7]);
-        if (rowPhone === formattedPhone && pData[i][9] !== "deleted") {
-          pid = String(pData[i][0]);
+        const rowStatus = pData[i][9];
+        const rowEventID = pData[i][10] ? String(pData[i][10]).trim() : "";
+        const belongsToThisEvent = (rowEventID === String(eventID).trim()) || (!rowEventID && eventAttPIDs.has(rowPid));
+
+        if (rowPhone === formattedPhone && rowStatus !== "deleted" && belongsToThisEvent) {
+          pid = rowPid;
           existingParticipantRowIndex = i + 2;
           break;
         }
@@ -369,7 +437,7 @@ function registerAndCheckIn(params) {
         }
       }
 
-      // อัปเดตข้อมูลผู้เข้าร่วมที่มีอยู่แล้วให้เป็นปัจจุบัน (เผื่อสะกดผิดหรือเปลี่ยนหน่วยงาน)
+      // อัปเดตข้อมูลผู้เข้าร่วมในกิจกรรมนี้ให้เป็นปัจจุบัน
       pSheet.getRange(existingParticipantRowIndex, 2).setValue(participantData.Title || "นาย");
       pSheet.getRange(existingParticipantRowIndex, 3).setValue(participantData.FirstName || "");
       pSheet.getRange(existingParticipantRowIndex, 4).setValue(participantData.LastName || "");
@@ -377,8 +445,9 @@ function registerAndCheckIn(params) {
       pSheet.getRange(existingParticipantRowIndex, 6).setValue(participantData.Position || "");
       pSheet.getRange(existingParticipantRowIndex, 7).setValue(participantData.Email || "");
       pSheet.getRange(existingParticipantRowIndex, 8).setValue(formattedPhone);
+      pSheet.getRange(existingParticipantRowIndex, 11).setValue(eventID || "");
     } else {
-      // เพิ่มผู้เข้าร่วมรายใหม่กรณีไม่พบเบอร์โทรศัพท์เดิมในระบบ
+      // เพิ่มผู้เข้าร่วมรายใหม่สำหรับกิจกรรมนี้โดยเฉพาะ
       pid = generateID("PID");
       pSheet.appendRow([
         pid,
@@ -390,7 +459,8 @@ function registerAndCheckIn(params) {
         participantData.Email || "",
         formattedPhone,
         new Date(), // CreatedAt
-        "active"    // Status
+        "active",   // Status
+        eventID || "" // EventID
       ]);
     }
 

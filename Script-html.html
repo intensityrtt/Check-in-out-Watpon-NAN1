@@ -9,6 +9,8 @@
     currentPage: 'dashboard',
     events: [],
     participants: [],
+    attendanceByEvent: {},
+    recentCheckinList: [],
     selectedEventID: '',
     checkinMethod: 'name',
     darkMode: false, // Force Light Mode globally
@@ -146,9 +148,18 @@
       document.getElementById('checkinSection')?.classList.add('d-none');
       document.getElementById('checkoutSection')?.classList.remove('d-none');
       document.querySelector(`[data-page="checkout"]`)?.classList.add('active');
+    } else if (page === 'participants') {
+      document.getElementById('page-events')?.classList.remove('d-none');
+      document.getElementById('eventsSection')?.classList.add('d-none');
+      document.getElementById('participantsSection')?.classList.remove('d-none');
+      document.querySelector(`[data-page="participants"]`)?.classList.add('active');
     } else {
       document.getElementById('page-' + page)?.classList.remove('d-none');
       document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
+      if (page === 'events') {
+        document.getElementById('eventsSection')?.classList.remove('d-none');
+        document.getElementById('participantsSection')?.classList.add('d-none');
+      }
       if (page === 'checkin') {
         document.getElementById('checkinSection')?.classList.remove('d-none');
         document.getElementById('checkoutSection')?.classList.add('d-none');
@@ -163,6 +174,7 @@
     if (page === 'dashboard') loadDashboard();
     else if (page === 'events') loadEventsPage();
     else if (page === 'participants') loadParticipantsPage();
+    else if (page === 'checkin') loadCheckinPage();
     else if (page === 'checkout') loadCheckoutPage();
     else if (page === 'report') loadReportPage();
     else if (page === 'export') loadExportPage();
@@ -194,40 +206,174 @@
   async function loadAllEvents() {
     const res = await api('getAllEvents');
     if (res.success) {
-      AppState.events = res.data;
+      AppState.events = res.data || [];
       populateEventSelectors();
     } else {
       showToast(res.message || 'ไม่สามารถโหลดกิจกรรมได้', 'error');
     }
   }
 
+  // ===== LOCAL PARTICIPANT-EVENT MAP HELPER =====
+  function getLocalParticipantEventMap() {
+    try {
+      return JSON.parse(localStorage.getItem('participant_event_map') || '{}');
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function setLocalParticipantEvent(pid, eventID) {
+    if (!pid || !eventID) return;
+    const map = getLocalParticipantEventMap();
+    map[String(pid)] = String(eventID);
+    localStorage.setItem('participant_event_map', JSON.stringify(map));
+  }
+
+  // ===== SYNC ATTENDANCE BY EVENT =====
+  async function syncEventAttendanceMap() {
+    if (!AppState.events || !AppState.events.length) return;
+    const map = {};
+    await Promise.all(AppState.events.map(async (ev) => {
+      const evId = String(ev.EventID);
+      const res = await api('getAttendanceByEvent', { eventID: evId });
+      map[evId] = (res && res.success && Array.isArray(res.data)) ? res.data : [];
+    }));
+    AppState.attendanceByEvent = map;
+  }
+
   // ===== LOAD ALL PARTICIPANTS =====
   async function loadAllParticipants() {
-    const res = await api('getAllParticipants');
+    const [res] = await Promise.all([
+      api('getAllParticipants'),
+      syncEventAttendanceMap()
+    ]);
     if (res.success) {
-      AppState.participants = res.data;
+      const localMap = getLocalParticipantEventMap();
+      const attEventsByPID = {};
+      Object.entries(AppState.attendanceByEvent || {}).forEach(([evId, list]) => {
+        (list || []).forEach(att => {
+          const pidKey = String(att.PID || '').trim();
+          if (!pidKey) return;
+          if (!attEventsByPID[pidKey]) attEventsByPID[pidKey] = [];
+          if (!attEventsByPID[pidKey].includes(evId)) attEventsByPID[pidKey].push(evId);
+        });
+      });
+
+      AppState.participants = (res.data || []).map(p => {
+        const pidKey = String(p.PID || '').trim();
+        const serverEv = p.EventID ? String(p.EventID).trim() : '';
+        const localEv = localMap[pidKey] || '';
+        const serverEvList = Array.isArray(p.EventIDs) ? p.EventIDs.map(String) : [];
+        const attEvList = attEventsByPID[pidKey] || [];
+        const allEvs = Array.from(new Set([serverEv, localEv, ...serverEvList, ...attEvList].filter(Boolean)));
+        return {
+          ...p,
+          EventID: serverEv || localEv || (allEvs[0] || ''),
+          EventIDs: allEvs
+        };
+      });
     } else {
       showToast(res.message || 'ไม่สามารถโหลดผู้เข้าร่วมได้', 'error');
     }
   }
 
+  // ดึงรายชื่อผู้เข้าอบรมเฉพาะของกิจกรรมที่ระบุ (แยกเป็นงาน ๆ ไป)
+  function getParticipantsByEventLocal(eventID) {
+    if (!eventID) return AppState.participants || [];
+    const targetEv = String(eventID).trim();
+    const attList = AppState.attendanceByEvent[targetEv] || [];
+    const attPidSet = new Set(attList.map(a => String(a.PID)));
+
+    const matched = (AppState.participants || []).filter(p => {
+      const pidStr = String(p.PID);
+      return (p.EventID && String(p.EventID) === targetEv) ||
+             (Array.isArray(p.EventIDs) && p.EventIDs.includes(targetEv)) ||
+             attPidSet.has(pidStr);
+    });
+
+    // กรณีมีผู้เช็คอินใน Attendance แต่ยังไม่อยู่ในรายการ Participants ที่โหลดมา
+    const matchedPidSet = new Set(matched.map(p => String(p.PID)));
+    attList.forEach(a => {
+      const pidStr = String(a.PID);
+      if (pidStr && !matchedPidSet.has(pidStr)) {
+        matched.push({
+          PID: a.PID,
+          Title: '',
+          FirstName: a.PID,
+          LastName: '',
+          FullName: a.FullName || a.PID,
+          Organization: a.Organization || '—',
+          Position: a.Position || '—',
+          Phone: a.Phone || '—',
+          Email: '',
+          EventID: targetEv,
+          EventIDs: [targetEv]
+        });
+        matchedPidSet.add(pidStr);
+      }
+    });
+
+    return matched;
+  }
+
+  function getAttendanceRecordLocal(pid, eventID) {
+    if (!pid || !eventID) return null;
+    const list = AppState.attendanceByEvent[String(eventID).trim()] || [];
+    return list.find(a => String(a.PID) === String(pid)) || null;
+  }
+
   // ===== POPULATE EVENT DROPDOWNS =====
   function populateEventSelectors() {
-    const selects = ['globalEventSelect', 'checkinEventSelect', 'checkoutEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'reportEventSelect'];
+    const selects = [
+      'globalEventSelect',
+      'checkinEventSelect',
+      'checkoutEventSelect',
+      'exportEventSelect',
+      'exportFullEventSelect',
+      'reportEventSelect',
+      'participantEventSelect',
+      'pEventSelect',
+      'importEventSelect'
+    ];
     selects.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
       const val = el.value;
-      el.innerHTML = '<option value="">-- ทุกกิจกรรม --</option>';
+      if (id === 'participantEventSelect') {
+        el.innerHTML = '<option value="">-- ทุกกิจกรรม (แยกแสดงเป็นงาน ๆ ไป) --</option>';
+      } else if (id === 'pEventSelect' || id === 'importEventSelect') {
+        el.innerHTML = '<option value="">-- เลือกกิจกรรม --</option>';
+      } else {
+        el.innerHTML = '<option value="">-- ทุกกิจกรรม --</option>';
+      }
       AppState.events.forEach(ev => {
         const opt = document.createElement('option');
         opt.value = ev.EventID;
         opt.textContent = `${ev.EventName} (${ev.Date || '—'})${ev.Status === 'closed' ? ' [ปิดลงทะเบียน]' : ''}`;
         el.appendChild(opt);
       });
-      el.value = val;
+      if (val && Array.from(el.options).some(o => o.value === val)) {
+        el.value = val;
+      } else if (AppState.selectedEventID && Array.from(el.options).some(o => o.value === AppState.selectedEventID)) {
+        el.value = AppState.selectedEventID;
+      }
     });
     updateActiveEventDisplay();
+    updateSidebarOnlineBadge();
+  }
+
+  function updateSidebarOnlineBadge() {
+    const badgeEl = document.getElementById('navBadgeOnline');
+    if (!badgeEl) return;
+    const selectedId = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
+    let attList = [];
+    if (selectedId) {
+      attList = AppState.attendanceByEvent[selectedId] || [];
+    } else {
+      attList = Object.values(AppState.attendanceByEvent || {}).flat();
+    }
+    const onlineCount = attList.filter(a => a.Status === 'checked-in').length;
+    badgeEl.textContent = onlineCount;
   }
 
   function updateActiveEventDisplay() {
@@ -245,12 +391,14 @@
   function onEventChange() {
     AppState.selectedEventID = document.getElementById('globalEventSelect').value;
     updateActiveEventDisplay();
+    updateSidebarOnlineBadge();
     // ซิงค์ไปยังตัวเลือกกิจกรรมในหน้าอื่นๆ อัตโนมัติ
-    ['checkinEventSelect', 'checkoutEventSelect', 'reportEventSelect', 'exportEventSelect', 'exportFullEventSelect'].forEach(id => {
+    ['checkinEventSelect', 'checkoutEventSelect', 'reportEventSelect', 'exportEventSelect', 'exportFullEventSelect', 'participantEventSelect'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = AppState.selectedEventID;
     });
     if (AppState.currentPage === 'dashboard') loadDashboard();
+    else if (AppState.currentPage === 'participants') renderParticipantsGrouped();
     else if (AppState.currentPage === 'checkin') loadRecentCheckins();
     else if (AppState.currentPage === 'checkout') loadPendingCheckout();
     else if (AppState.currentPage === 'report') loadReportData();
@@ -260,24 +408,61 @@
   async function loadDashboard() {
     const eventID = AppState.selectedEventID || document.getElementById('globalEventSelect')?.value || '';
     updateActiveEventDisplay();
-    const res = await api('getDashboardStats', { eventID });
+    const [res] = await Promise.all([
+      api('getDashboardStats', { eventID }),
+      loadAllParticipants()
+    ]);
     if (!res.success) { showToast(res.message, 'error'); return; }
-    const s = res.stats;
+
+    // คำนวณสถิติแยกตามกิจกรรมอย่างแม่นยำ (รองรับทั้งกรณีเลือก 1 กิจกรรม และทุกกิจกรรม)
+    const eventParticipants = eventID ? getParticipantsByEventLocal(eventID) : (AppState.participants || []);
+    const attList = eventID
+      ? (AppState.attendanceByEvent[eventID] || [])
+      : Object.values(AppState.attendanceByEvent || {}).flat();
+
+    const checkedIn = attList.filter(a => a.Status === 'checked-in' || a.Status === 'checked-out').length;
+    const checkedOut = attList.filter(a => a.Status === 'checked-out').length;
+    const notCheckedOut = attList.filter(a => a.Status === 'checked-in').length;
+    const totalParticipants = Math.max(eventParticipants.length, checkedIn);
+    const notArrived = Math.max(0, totalParticipants - checkedIn);
+    const attendanceRate = totalParticipants > 0 ? Math.round((checkedIn / totalParticipants) * 100) : 0;
+
     // Update stat cards
-    animateNumber('statTotal', s.totalParticipants);
-    animateNumber('statCheckedIn', s.checkedIn);
-    animateNumber('statCheckedOut', s.checkedOut);
-    animateNumber('statNotArrived', s.notArrived);
-    animateNumber('statNotCheckOut', s.notCheckedOut);
-    document.getElementById('statRate').textContent = s.attendanceRate + '%';
+    animateNumber('statTotal', totalParticipants);
+    animateNumber('statCheckedIn', checkedIn);
+    animateNumber('statCheckedOut', checkedOut);
+    animateNumber('statNotArrived', notArrived);
+    animateNumber('statNotCheckOut', notCheckedOut);
+    document.getElementById('statRate').textContent = attendanceRate + '%';
     const bar = document.getElementById('rateBar');
-    if (bar) setTimeout(() => bar.style.width = s.attendanceRate + '%', 100);
-    document.getElementById('navBadgeOnline').textContent = s.notCheckedOut;
-    // Draw charts
-    if (res.charts) {
-      drawPieChart(res.charts.pieData);
-      drawBarChart(res.charts.byOrg);
-      drawLineChart(res.charts.hourly);
+    if (bar) setTimeout(() => bar.style.width = attendanceRate + '%', 100);
+    document.getElementById('navBadgeOnline').textContent = notCheckedOut;
+
+    // สร้างข้อมูลกราฟแยกตามกิจกรรมที่เลือก
+    const pieData = [
+      ['สถานะ', 'จำนวน'],
+      ['Check-out แล้ว', checkedOut],
+      ['Check-in แล้ว (ยังอยู่)', notCheckedOut],
+      ['ยังไม่มา', notArrived]
+    ];
+
+    const checkedInPIDs = new Set(attList.map(a => String(a.PID)));
+    const orgMap = {};
+    eventParticipants.forEach(p => {
+      const org = p.Organization || 'ไม่ระบุ';
+      if (!orgMap[org]) orgMap[org] = { total: 0, checkedIn: 0 };
+      orgMap[org].total++;
+      if (checkedInPIDs.has(String(p.PID))) orgMap[org].checkedIn++;
+    });
+    const byOrg = [['องค์กร', 'ลงทะเบียน', 'Check-in']];
+    Object.entries(orgMap).forEach(([org, d]) => {
+      byOrg.push([org, d.total, d.checkedIn]);
+    });
+
+    if (typeof google !== 'undefined' && google.visualization) {
+      drawPieChart(pieData);
+      drawBarChart(byOrg.length > 1 ? byOrg : (res.charts ? res.charts.byOrg : []));
+      if (res.charts && res.charts.hourly) drawLineChart(res.charts.hourly);
     }
   }
 
@@ -514,41 +699,165 @@
 
   function printQR() { window.print(); }
 
-  // ===== PARTICIPANTS PAGE =====
+  // ===== PARTICIPANTS PAGE (แยกแสดงเป็นงาน ๆ ไป) =====
   async function loadParticipantsPage() {
-    document.getElementById('participantsPageContent').innerHTML = document.getElementById('page-events').querySelector('#participantsSection').outerHTML;
-    document.getElementById('eventsSection').classList.add('d-none');
-    document.getElementById('participantsSection').classList.remove('d-none');
+    document.getElementById('page-events')?.classList.remove('d-none');
+    document.getElementById('eventsSection')?.classList.add('d-none');
+    document.getElementById('participantsSection')?.classList.remove('d-none');
+
+    await loadAllEvents();
     await loadAllParticipants();
-    renderParticipantsTable(AppState.participants);
-    document.getElementById('participantCount').textContent = `ทั้งหมด ${AppState.participants.length} คน`;
+
+    const pSelect = document.getElementById('participantEventSelect');
+    if (pSelect && AppState.selectedEventID) {
+      pSelect.value = AppState.selectedEventID;
+    }
+    renderParticipantsGrouped();
   }
 
-  function renderParticipantsTable(participants) {
-    const tbody = document.getElementById('participantsTableBody');
-    if (!participants.length) { tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i class="bi bi-people"></i><p>ยังไม่มีผู้เข้าร่วม</p></div></td></tr>`; return; }
-    tbody.innerHTML = participants.map((p, i) => `
-    <tr>
-      <td>${i + 1}</td>
-      <td><span class="badge bg-secondary">${p.PID}</span></td>
-      <td><strong>${p.FullName}</strong></td>
-      <td>${p.Organization || '—'}</td>
-      <td>${p.Position || '—'}</td>
-      <td>${p.Phone || '—'}</td>
-      <td>${p.Email || '—'}</td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary me-1" onclick="openEditParticipantModal('${p.PID}')"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteParticipant('${p.PID}','${p.FullName}')"><i class="bi bi-trash"></i></button>
-      </td>
-    </tr>`).join('');
+  function onParticipantEventSelectChange() {
+    const val = document.getElementById('participantEventSelect')?.value || '';
+    AppState.selectedEventID = val;
+    const globalEl = document.getElementById('globalEventSelect');
+    if (globalEl) globalEl.value = val;
+    updateActiveEventDisplay();
+    updateSidebarOnlineBadge();
+    renderParticipantsGrouped();
   }
 
   function filterParticipants() {
-    const q = document.getElementById('participantSearch')?.value.toLowerCase() || '';
-    const filtered = AppState.participants.filter(p =>
-      p.FullName.toLowerCase().includes(q) || p.PID.toLowerCase().includes(q) ||
-      p.Phone?.toLowerCase().includes(q) || p.Organization?.toLowerCase().includes(q));
-    renderParticipantsTable(filtered);
+    renderParticipantsGrouped();
+  }
+
+  function renderParticipantsGrouped() {
+    const container = document.getElementById('participantsGroupedContainer');
+    if (!container) return;
+
+    const selectedEventID = document.getElementById('participantEventSelect')?.value || '';
+    const q = (document.getElementById('participantSearch')?.value || '').toLowerCase().trim();
+
+    const matchesQuery = (p) => {
+      if (!q) return true;
+      return String(p.FullName || '').toLowerCase().includes(q) ||
+             String(p.PID || '').toLowerCase().includes(q) ||
+             String(p.Phone || '').toLowerCase().includes(q) ||
+             String(p.Organization || '').toLowerCase().includes(q) ||
+             String(p.Position || '').toLowerCase().includes(q);
+    };
+
+    const buildEventGroupCard = (ev, list) => {
+      const evId = ev ? String(ev.EventID) : '';
+      const evName = ev ? ev.EventName : 'ผู้เข้าร่วมที่ยังไม่ได้ระบุกิจกรรม';
+      const evDate = ev && ev.Date ? `<span class="badge bg-light text-secondary border ms-2"><i class="bi bi-calendar3 me-1"></i>${ev.Date}</span>` : '';
+      const evLoc = ev && ev.Location ? `<span class="text-muted small ms-2"><i class="bi bi-geo-alt me-1"></i>${ev.Location}</span>` : '';
+
+      const attList = evId ? (AppState.attendanceByEvent[evId] || []) : [];
+      const attMap = {};
+      attList.forEach(a => { attMap[String(a.PID)] = a; });
+
+      const checkedInCount = list.filter(p => attMap[String(p.PID)]).length;
+
+      const rowsHtml = list.length ? list.map((p, idx) => {
+        const att = attMap[String(p.PID)];
+        let statusBadge = '<span class="status-badge badge-not-arrived">ยังไม่เช็คอิน</span>';
+        let checkInTimeStr = '—';
+        if (att) {
+          checkInTimeStr = att.CheckInTime || '—';
+          statusBadge = att.Status === 'checked-out'
+            ? '<span class="status-badge badge-checked-out">Check-out แล้ว</span>'
+            : '<span class="status-badge badge-checked-in">อยู่ในงาน</span>';
+        }
+        return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td><span class="badge bg-secondary">${p.PID}</span></td>
+          <td><strong>${p.FullName}</strong></td>
+          <td>${p.Organization || '—'}</td>
+          <td>${p.Position || '—'}</td>
+          <td>${p.Phone || '—'}</td>
+          <td><small>${checkInTimeStr}</small></td>
+          <td>${statusBadge}</td>
+          <td>
+            <button class="btn btn-sm btn-outline-primary me-1" onclick="openEditParticipantModal('${p.PID}')" title="แก้ไข"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteParticipant('${p.PID}','${p.FullName}')" title="ลบ"><i class="bi bi-trash"></i></button>
+          </td>
+        </tr>`;
+      }).join('') : `<tr><td colspan="9" class="text-center text-muted py-4">ยังไม่มีข้อมูลผู้เข้าอบรมในกิจกรรมนี้</td></tr>`;
+
+      return `
+      <div class="card event-group-card mb-4">
+        <div class="card-header event-group-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <span class="fw-bold text-primary"><i class="bi bi-calendar-check me-2"></i>${evName}</span>
+            ${evDate}
+            ${evLoc}
+          </div>
+          <div class="d-flex align-items-center flex-wrap gap-2">
+            <span class="badge bg-primary">ผู้เข้าอบรม ${list.length} คน</span>
+            ${evId ? `<span class="badge bg-success">เช็คอินแล้ว ${checkedInCount} คน</span>` : ''}
+            ${evId ? `<button class="btn btn-sm btn-outline-primary" onclick="openAddParticipantModal('${evId}')"><i class="bi bi-person-plus me-1"></i>เพิ่มในงานนี้</button>` : ''}
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>PID</th>
+                  <th>ชื่อ-นามสกุล</th>
+                  <th>องค์กร/หน่วยงาน</th>
+                  <th>ตำแหน่ง</th>
+                  <th>เบอร์โทร</th>
+                  <th>เวลา Check-in</th>
+                  <th>สถานะ</th>
+                  <th>การจัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    };
+
+    let totalDisplayed = 0;
+    let html = '';
+
+    if (selectedEventID) {
+      const ev = (AppState.events || []).find(e => String(e.EventID) === String(selectedEventID));
+      const list = getParticipantsByEventLocal(selectedEventID).filter(matchesQuery);
+      totalDisplayed = list.length;
+      html = buildEventGroupCard(ev || { EventID: selectedEventID, EventName: selectedEventID }, list);
+    } else {
+      const assignedPIDs = new Set();
+      (AppState.events || []).forEach(ev => {
+        const evList = getParticipantsByEventLocal(ev.EventID);
+        evList.forEach(p => assignedPIDs.add(String(p.PID)));
+        const filteredList = evList.filter(matchesQuery);
+        if (!q || filteredList.length > 0) {
+          totalDisplayed += filteredList.length;
+          html += buildEventGroupCard(ev, filteredList);
+        }
+      });
+
+      // ผู้เข้าร่วมที่ยังไม่ได้ผูกกับกิจกรรมใดเลย
+      const unassigned = (AppState.participants || []).filter(p => !assignedPIDs.has(String(p.PID))).filter(matchesQuery);
+      if (unassigned.length > 0) {
+        totalDisplayed += unassigned.length;
+        html += buildEventGroupCard(null, unassigned);
+      }
+
+      if (!html) {
+        html = `<div class="card"><div class="card-body"><div class="empty-state"><i class="bi bi-people"></i><p>ไม่พบข้อมูลผู้เข้าอบรม</p></div></div></div>`;
+      }
+    }
+
+    container.innerHTML = html;
+    const countEl = document.getElementById('participantCount');
+    if (countEl) countEl.textContent = `ทั้งหมด ${totalDisplayed} คน`;
   }
 
   // ===== TITLE / PREFIX HELPER =====
@@ -600,15 +909,22 @@
     }
   }
 
-  function openAddParticipantModal() {
+  function openAddParticipantModal(defaultEventID = '') {
+    populateEventSelectors();
     document.getElementById('editPID').value = '';
     document.getElementById('participantModalTitle').innerHTML = '<i class="bi bi-person-plus me-2 text-primary"></i>เพิ่มผู้เข้าร่วม';
     ['pFirst', 'pLast', 'pOrg', 'pPos', 'pPhone', 'pEmail'].forEach(id => document.getElementById(id).value = '');
     setTitleValue('pTitle', 'pTitleOther', 'นาย');
+    const pEvSelect = document.getElementById('pEventSelect');
+    if (pEvSelect) {
+      const targetEv = defaultEventID || document.getElementById('participantEventSelect')?.value || AppState.selectedEventID || (AppState.events[0]?.EventID || '');
+      pEvSelect.value = targetEv;
+    }
     new bootstrap.Modal(document.getElementById('participantModal')).show();
   }
 
   function openEditParticipantModal(pid) {
+    populateEventSelectors();
     const p = AppState.participants.find(x => x.PID === pid);
     if (!p) return;
     document.getElementById('editPID').value = pid;
@@ -620,11 +936,21 @@
     document.getElementById('pPos').value = p.Position;
     document.getElementById('pPhone').value = p.Phone;
     document.getElementById('pEmail').value = p.Email;
+    const pEvSelect = document.getElementById('pEventSelect');
+    if (pEvSelect) {
+      pEvSelect.value = p.EventID || (p.EventIDs && p.EventIDs[0]) || AppState.selectedEventID || '';
+    }
     new bootstrap.Modal(document.getElementById('participantModal')).show();
   }
 
   async function saveParticipant() {
     const pid = document.getElementById('editPID').value;
+    const eventID = document.getElementById('pEventSelect')?.value || '';
+    if (!eventID) {
+      showToast('กรุณาเลือกกิจกรรม / งานอบรม', 'warning');
+      document.getElementById('pEventSelect')?.focus();
+      return;
+    }
     const titleVal = getTitleValue('pTitle', 'pTitleOther');
     if (!titleVal) {
       showToast('กรุณาระบุคำนำหน้าชื่อ', 'warning');
@@ -633,6 +959,7 @@
     }
     const data = {
       PID: pid,
+      EventID: eventID,
       Title: titleVal,
       FirstName: document.getElementById('pFirst').value.trim(),
       LastName: document.getElementById('pLast').value.trim(),
@@ -646,11 +973,12 @@
     const res = await api(pid ? 'updateParticipant' : 'addParticipant', data);
     hideLoading();
     if (res.success) {
+      const savedPid = pid || res.pid;
+      if (savedPid && eventID) setLocalParticipantEvent(savedPid, eventID);
       bootstrap.Modal.getInstance(document.getElementById('participantModal'))?.hide();
       showToast(res.message, 'success');
       await loadAllParticipants();
-      renderParticipantsTable(AppState.participants);
-      document.getElementById('participantCount').textContent = `ทั้งหมด ${AppState.participants.length} คน`;
+      renderParticipantsGrouped();
     } else showToast(res.message, 'error');
   }
 
@@ -658,12 +986,19 @@
     const c = await Swal.fire({ title: 'ลบผู้เข้าร่วม?', text: name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#EF4444', confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', background: 'var(--bg-card)', color: 'var(--text-primary)' });
     if (!c.isConfirmed) return;
     const res = await api('deleteParticipant', { PID: pid });
-    if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsTable(AppState.participants); }
+    if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsGrouped(); }
     else showToast(res.message, 'error');
   }
 
   // ===== IMPORT CSV =====
-  function openImportModal() { new bootstrap.Modal(document.getElementById('importModal')).show(); }
+  function openImportModal() {
+    populateEventSelectors();
+    const impSelect = document.getElementById('importEventSelect');
+    if (impSelect) {
+      impSelect.value = document.getElementById('participantEventSelect')?.value || AppState.selectedEventID || (AppState.events[0]?.EventID || '');
+    }
+    new bootstrap.Modal(document.getElementById('importModal')).show();
+  }
 
   document.addEventListener('change', function (e) {
     if (e.target.id === 'csvFile') {
@@ -679,6 +1014,8 @@
   });
 
   async function doImportCSV() {
+    const eventID = document.getElementById('importEventSelect')?.value || '';
+    if (!eventID) { showToast('กรุณาเลือกกิจกรรมที่จะนำเข้าข้อมูล', 'warning'); return; }
     const file = document.getElementById('csvFile').files[0];
     if (!file) { showToast('กรุณาเลือกไฟล์ CSV', 'warning'); return; }
     const reader = new FileReader();
@@ -686,19 +1023,39 @@
       const lines = ev.target.result.split('\n').filter(l => l.trim());
       const csvData = lines.slice(1).map(line => {
         const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-        return { Title: cols[0] || '', FirstName: cols[1] || '', LastName: cols[2] || '', Organization: cols[3] || '', Position: cols[4] || '', Email: cols[5] || '', Phone: cols[6] || '' };
+        return { Title: cols[0] || '', FirstName: cols[1] || '', LastName: cols[2] || '', Organization: cols[3] || '', Position: cols[4] || '', Email: cols[5] || '', Phone: cols[6] || '', EventID: eventID };
       });
       showLoading('กำลังนำเข้าข้อมูล...');
-      const res = await api('importParticipants', { csvData });
+      const res = await api('importParticipants', { csvData, eventID });
       hideLoading();
       bootstrap.Modal.getInstance(document.getElementById('importModal'))?.hide();
-      if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsTable(AppState.participants); }
+      if (res.success) { showToast(res.message, 'success'); await loadAllParticipants(); renderParticipantsGrouped(); }
       else showToast(res.message, 'error');
     };
     reader.readAsText(file, 'UTF-8');
   }
 
   // ===== CHECK-IN =====
+  async function loadCheckinPage() {
+    if (typeof QR_MODE !== 'undefined' && QR_MODE) return;
+    const checkinSelect = document.getElementById('checkinEventSelect');
+    if (checkinSelect) {
+      if (AppState.selectedEventID) {
+        checkinSelect.value = AppState.selectedEventID;
+      } else if (!checkinSelect.value && AppState.events && AppState.events.length > 0) {
+        const activeEv = AppState.events.find(e => e.Status === 'active') || AppState.events[0];
+        if (activeEv) {
+          checkinSelect.value = activeEv.EventID;
+          AppState.selectedEventID = activeEv.EventID;
+          const globalSelect = document.getElementById('globalEventSelect');
+          if (globalSelect) globalSelect.value = activeEv.EventID;
+          updateActiveEventDisplay();
+        }
+      }
+    }
+    await loadRecentCheckins();
+  }
+
   function setCheckinMethod(method) {
     AppState.checkinMethod = method;
     ['name', 'phone', 'pid', 'qr', 'register'].forEach(m => document.getElementById('method' + m.charAt(0).toUpperCase() + m.slice(1))?.classList.remove('active'));
@@ -715,24 +1072,50 @@
   async function searchForCheckin() {
     const q = document.getElementById('checkinSearch').value.trim();
     if (q.length < 1) { document.getElementById('checkinResults').innerHTML = ''; return; }
-    const res = await api('searchParticipants', { query: q });
-    if (!res.success || !res.data.length) {
+    const eventID = document.getElementById('checkinEventSelect').value;
+
+    // ค้นหาผู้เข้าอบรมในกิจกรรมที่เลือกก่อน หากไม่พบจึงค้นหาจากฐานข้อมูลรวม
+    let matched = [];
+    if (eventID) {
+      const ql = q.toLowerCase();
+      matched = getParticipantsByEventLocal(eventID).filter(p =>
+        String(p.FullName || '').toLowerCase().includes(ql) ||
+        String(p.PID || '').toLowerCase().includes(ql) ||
+        String(p.Phone || '').toLowerCase().includes(ql) ||
+        String(p.Organization || '').toLowerCase().includes(ql)
+      );
+    }
+    if (!matched.length) {
+      const res = await api('searchParticipants', { query: q, eventID });
+      if (res.success && res.data && res.data.length) {
+        matched = res.data;
+      } else {
+        const resAll = await api('searchParticipants', { query: q });
+        if (resAll.success && resAll.data) matched = resAll.data;
+      }
+    }
+
+    if (!matched.length) {
       document.getElementById('checkinResults').innerHTML = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>ไม่พบผู้เข้าร่วม "${q}"</div>`;
       return;
     }
-    const eventID = document.getElementById('checkinEventSelect').value;
-    document.getElementById('checkinResults').innerHTML = res.data.slice(0, 10).map(p => `
-    <div class="participant-result mb-2 d-flex align-items-center gap-3">
-      <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
-      <div style="flex:1">
-        <div class="fw-bold">${p.FullName}</div>
-        <small class="text-muted">${p.Organization || ''} ${p.Position ? '| ' + p.Position : ''}</small>
-        <div><small class="text-muted">${p.Phone || ''} | ${p.PID}</small></div>
-      </div>
-      <button class="btn btn-success btn-sm" onclick="doCheckIn('${p.PID}')">
-        <i class="bi bi-check-circle"></i> Check-in
-      </button>
-    </div>`).join('');
+
+    document.getElementById('checkinResults').innerHTML = matched.slice(0, 15).map(p => {
+      const att = eventID ? getAttendanceRecordLocal(p.PID, eventID) : null;
+      const actionBtn = att
+        ? `<span class="status-badge ${att.Status === 'checked-out' ? 'badge-checked-out' : 'badge-checked-in'}">${att.Status === 'checked-out' ? 'Check-out แล้ว' : 'Check-in แล้ว (' + (att.CheckInTime || '') + ')'}</span>`
+        : `<button class="btn btn-success btn-sm" onclick="doCheckIn('${p.PID}')"><i class="bi bi-check-circle"></i> Check-in</button>`;
+      return `
+      <div class="participant-result mb-2 d-flex align-items-center gap-3">
+        <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
+        <div style="flex:1">
+          <div class="fw-bold">${p.FullName}</div>
+          <small class="text-muted">${p.Organization || ''} ${p.Position ? '| ' + p.Position : ''}</small>
+          <div><small class="text-muted">${p.Phone || ''} | ${p.PID}</small></div>
+        </div>
+        ${actionBtn}
+      </div>`;
+    }).join('');
   }
 
   async function doCheckIn(pid) {
@@ -983,30 +1366,132 @@
   }
 
   async function loadRecentCheckins() {
-    const eventID = document.getElementById('checkinEventSelect').value;
-    if (!eventID) return;
-    const res = await api('getAttendanceByEvent', { eventID });
-    if (!res.success) return;
+    if (typeof QR_MODE !== 'undefined' && QR_MODE) return;
+    const selectEl = document.getElementById('checkinEventSelect');
+    const eventID = selectEl ? selectEl.value : (AppState.selectedEventID || '');
     const tbody = document.getElementById('recentCheckinBody');
-    const list = res.data.slice(-20).reverse();
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ยังไม่มีการ Check-in</td></tr>'; return; }
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>กำลังโหลดรายชื่อผู้เช็คอินทั้งหมด...</td></tr>';
+
+    // โหลดข้อมูลผู้เข้าร่วมล่าสุดเสมอ เพื่อให้ผู้ที่เพิ่งสแกน QR Code ลงทะเบียนมีชื่อ-นามสกุลและหน่วยงานครบถ้วน
+    await loadAllParticipants();
+
+    let list = [];
+    if (eventID) {
+      const res = await api('getAttendanceByEvent', { eventID });
+      if (res.success && Array.isArray(res.data)) {
+        AppState.attendanceByEvent[eventID] = res.data;
+        if (!AppState.eventParticipantsMap[eventID]) {
+          AppState.eventParticipantsMap[eventID] = new Set();
+        }
+        res.data.forEach(a => {
+          if (a.PID) AppState.eventParticipantsMap[eventID].add(String(a.PID).trim());
+        });
+        list = [...res.data].reverse();
+      }
+    } else {
+      await syncEventAttendanceMap();
+      const allAtt = [];
+      Object.keys(AppState.attendanceByEvent).forEach(eid => {
+        (AppState.attendanceByEvent[eid] || []).forEach(a => allAtt.push(a));
+      });
+      list = allAtt.reverse();
+    }
+
+    AppState.recentCheckinList = list;
+
+    const totalCount = list.length;
+    const onlineCount = list.filter(a => a.Status === 'checked-in').length;
+    const outCount = list.filter(a => a.Status === 'checked-out').length;
+
+    const totalBadge = document.getElementById('checkinCountTotal');
+    const onlineBadge = document.getElementById('checkinCountOnline');
+    const outBadge = document.getElementById('checkinCountOut');
+    if (totalBadge) totalBadge.textContent = `ทั้งหมด ${totalCount} คน`;
+    if (onlineBadge) onlineBadge.textContent = `อยู่ในงาน ${onlineCount} คน`;
+    if (outBadge) outBadge.textContent = `Check-out แล้ว ${outCount} คน`;
+
+    const navBadge = document.getElementById('navBadgeOnline');
+    if (navBadge) navBadge.textContent = totalCount;
+
+    filterRecentCheckins();
+  }
+
+  function filterRecentCheckins() {
+    const tbody = document.getElementById('recentCheckinBody');
+    if (!tbody) return;
+
+    const list = AppState.recentCheckinList || [];
+    const statusFilter = document.getElementById('checkinStatusFilter')?.value || 'all';
+    const q = (document.getElementById('checkinListSearch')?.value || '').trim().toLowerCase();
+    const selectedEventID = document.getElementById('checkinEventSelect')?.value || '';
+
     const pidMap = {};
-    AppState.participants.forEach(p => pidMap[p.PID] = p);
-    tbody.innerHTML = list.map((a, i) => {
-      const p = pidMap[a.PID] || { FullName: a.PID, Organization: '' };
+    AppState.participants.forEach(p => { pidMap[String(p.PID).trim()] = p; });
+    const evMap = {};
+    AppState.events.forEach(e => { evMap[String(e.EventID).trim()] = e.EventName; });
+
+    const filtered = list.filter(a => {
+      if (statusFilter !== 'all' && a.Status !== statusFilter) return false;
+      if (!q) return true;
+      const p = pidMap[String(a.PID).trim()] || {};
+      const fullName = (p.FullName || a.PID || '').toLowerCase();
+      const org = (p.Organization || '').toLowerCase();
+      const pos = (p.Position || '').toLowerCase();
+      const phone = String(p.Phone || '').toLowerCase();
+      const pid = String(a.PID || '').toLowerCase();
+      return fullName.includes(q) || org.includes(q) || pos.includes(q) || phone.includes(q) || pid.includes(q);
+    });
+
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">${list.length ? 'ไม่พบรายชื่อตามเงื่อนไขที่ค้นหา' : 'ยังไม่มีการ Check-in ในกิจกรรมนี้'}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map((a, i) => {
+      const p = pidMap[String(a.PID).trim()] || { FullName: a.PID, Position: '', Organization: '', Phone: '' };
+      const evLabel = (!selectedEventID && a.EventID && evMap[a.EventID])
+        ? `<div class="small text-primary mt-1"><i class="bi bi-calendar-event me-1"></i>${evMap[a.EventID]}</div>`
+        : '';
       return `<tr>
-      <td>${i + 1}</td>
-      <td><strong>${p.FullName}</strong></td>
-      <td>${p.Organization || '—'}</td>
-      <td>${a.CheckInTime}</td>
-      <td><span class="status-badge ${a.Status === 'checked-out' ? 'badge-checked-out' : 'badge-checked-in'}">${a.Status === 'checked-out' ? 'Check-out แล้ว' : 'อยู่ในงาน'}</span></td>
-    </tr>`;
+        <td>${i + 1}</td>
+        <td>
+          <strong>${p.FullName || a.PID}</strong>
+          <div class="small text-muted">${a.PID}</div>
+          ${evLabel}
+        </td>
+        <td>${p.Position || '—'}</td>
+        <td>${p.Organization || '—'}</td>
+        <td>${p.Phone || '—'}</td>
+        <td>${a.CheckInTime || '—'}</td>
+        <td>${a.CheckOutTime || '—'}</td>
+        <td><span class="status-badge ${a.Status === 'checked-out' ? 'badge-checked-out' : 'badge-checked-in'}">${a.Status === 'checked-out' ? 'Check-out แล้ว' : 'อยู่ในงาน'}</span></td>
+      </tr>`;
     }).join('');
   }
 
   document.addEventListener('change', function (e) {
-    if (e.target.id === 'checkinEventSelect') loadRecentCheckins();
-    if (e.target.id === 'checkoutEventSelect') loadPendingCheckout();
+    if (e.target.id === 'checkinEventSelect') {
+      AppState.selectedEventID = e.target.value;
+      const globalSel = document.getElementById('globalEventSelect');
+      if (globalSel) globalSel.value = e.target.value;
+      const searchEl = document.getElementById('checkinSearch');
+      if (searchEl) searchEl.value = '';
+      const resEl = document.getElementById('checkinResults');
+      if (resEl) resEl.innerHTML = '';
+      loadRecentCheckins();
+    }
+    if (e.target.id === 'checkoutEventSelect') {
+      AppState.selectedEventID = e.target.value;
+      const globalSel = document.getElementById('globalEventSelect');
+      if (globalSel) globalSel.value = e.target.value;
+      const searchEl = document.getElementById('checkoutSearch');
+      if (searchEl) searchEl.value = '';
+      const resEl = document.getElementById('checkoutResults');
+      if (resEl) resEl.innerHTML = '';
+      loadPendingCheckout();
+    }
   });
 
   function setupQRMode() {
@@ -1014,7 +1499,7 @@
   }
 
   // ===== CHECK-OUT =====
-  function loadCheckoutPage() {
+  async function loadCheckoutPage() {
     document.getElementById('checkoutSection')?.classList.remove('d-none');
     
     // Auto-select event from global event select if not set
@@ -1022,31 +1507,64 @@
     if (checkoutSelect) {
       if (AppState.selectedEventID) {
         checkoutSelect.value = AppState.selectedEventID;
+      } else if (!checkoutSelect.value && AppState.events.length > 0) {
+        const activeEv = AppState.events.find(e => e.Status === 'active') || AppState.events[0];
+        if (activeEv) {
+          AppState.selectedEventID = activeEv.EventID;
+          checkoutSelect.value = activeEv.EventID;
+        }
       }
-      loadPendingCheckout();
+      await loadPendingCheckout();
     }
   }
 
   async function searchForCheckout() {
     const q = document.getElementById('checkoutSearch').value.trim();
     if (q.length < 1) { document.getElementById('checkoutResults').innerHTML = ''; return; }
-    const res = await api('searchParticipants', { query: q });
-    if (!res.success || !res.data.length) {
-      document.getElementById('checkoutResults').innerHTML = `<div class="alert alert-warning">ไม่พบผู้เข้าร่วม "${q}"</div>`;
+    const eventID = document.getElementById('checkoutEventSelect').value;
+
+    if (!AppState.participants.length) await loadAllParticipants();
+    if (eventID && !AppState.attendanceByEvent[eventID]) {
+      const attRes = await api('getAttendanceByEvent', { eventID });
+      if (attRes.success) AppState.attendanceByEvent[eventID] = attRes.data || [];
+    }
+
+    const pool = eventID ? getParticipantsByEventLocal(eventID) : AppState.participants;
+    const qLower = q.toLowerCase();
+    const matched = pool.filter(p =>
+      (p.FullName && p.FullName.toLowerCase().includes(qLower)) ||
+      (p.FirstName && p.FirstName.toLowerCase().includes(qLower)) ||
+      (p.LastName && p.LastName.toLowerCase().includes(qLower)) ||
+      (p.Phone && String(p.Phone).toLowerCase().includes(qLower)) ||
+      (p.PID && String(p.PID).toLowerCase().includes(qLower)) ||
+      (p.Organization && p.Organization.toLowerCase().includes(qLower))
+    );
+
+    if (!matched.length) {
+      document.getElementById('checkoutResults').innerHTML = `<div class="alert alert-warning">ไม่พบผู้เข้าร่วม "${q}" ในกิจกรรมนี้</div>`;
       return;
     }
-    const eventID = document.getElementById('checkoutEventSelect').value;
-    document.getElementById('checkoutResults').innerHTML = res.data.slice(0, 10).map(p => `
-    <div class="participant-result mb-2 d-flex align-items-center gap-3">
-      <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
-      <div style="flex:1">
-        <div class="fw-bold">${p.FullName}</div>
-        <small class="text-muted">${p.Organization || ''} | ${p.PID}</small>
-      </div>
-      <button class="btn btn-warning btn-sm" onclick="doCheckOut('${p.PID}')">
-        <i class="bi bi-box-arrow-right"></i> Check-out
-      </button>
-    </div>`).join('');
+
+    document.getElementById('checkoutResults').innerHTML = matched.slice(0, 15).map(p => {
+      const att = eventID ? getAttendanceRecordLocal(p.PID, eventID) : null;
+      let actionHtml = '';
+      if (att && att.Status === 'checked-out') {
+        actionHtml = `<span class="status-badge badge-checked-out">Check-out แล้ว (${att.CheckOutTime || ''})</span>`;
+      } else if (att && att.Status === 'checked-in') {
+        actionHtml = `<button class="btn btn-warning btn-sm" onclick="doCheckOut('${p.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button>`;
+      } else {
+        actionHtml = `<span class="status-badge badge-not-arrived">ยังไม่ได้ Check-in</span>`;
+      }
+      return `
+      <div class="participant-result mb-2 d-flex align-items-center gap-3">
+        <div class="participant-avatar">${(p.FirstName || '?')[0]}</div>
+        <div style="flex:1">
+          <div class="fw-bold">${p.FullName}</div>
+          <small class="text-muted">${p.Organization || ''} | ${p.PID}</small>
+        </div>
+        ${actionHtml}
+      </div>`;
+    }).join('');
   }
 
   async function doCheckOut(pid) {
@@ -1079,10 +1597,12 @@
     if (selectedCountSpan) selectedCountSpan.textContent = '0';
 
     if (!eventID) return;
+    await loadAllParticipants();
     const res = await api('getAttendanceByEvent', { eventID });
     const tbody = document.getElementById('pendingCheckoutBody');
     if (!res.success) return;
-    const pending = res.data.filter(a => a.Status === 'checked-in');
+    AppState.attendanceByEvent[eventID] = res.data || [];
+    const pending = (res.data || []).filter(a => a.Status === 'checked-in');
     if (!pending.length) { 
       tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">ทุกคน Check-out แล้ว ✅</td></tr>'; 
       return; 
@@ -1091,9 +1611,9 @@
     if (btnAll) btnAll.disabled = false;
     
     const pidMap = {};
-    AppState.participants.forEach(p => pidMap[p.PID] = p);
+    AppState.participants.forEach(p => pidMap[String(p.PID).trim()] = p);
     tbody.innerHTML = pending.map((a, i) => {
-      const p = pidMap[a.PID] || { FullName: a.PID, Organization: '' };
+      const p = pidMap[String(a.PID).trim()] || { FullName: a.PID, Organization: '' };
       return `<tr>
       <td class="text-center"><input type="checkbox" class="pending-chk" value="${a.PID}" onchange="onPendingChkChange()"></td>
       <td>${i + 1}</td>
@@ -1198,47 +1718,149 @@
     const content = document.getElementById('reportPageContent');
     content.innerHTML = `
     <div class="page-header">
-      <div class="page-header-title"><h4><i class="bi bi-file-earmark-bar-graph text-primary me-2"></i>รายงาน</h4><p>รายงานการเข้าร่วมกิจกรรม</p></div>
+      <div class="page-header-title"><h4><i class="bi bi-file-earmark-bar-graph text-primary me-2"></i>รายงาน</h4><p>รายงานการเข้าร่วมกิจกรรมแยกตามรายชื่องานอบรม</p></div>
     </div>
     <div class="card mb-3"><div class="card-body">
       <div class="row g-3 align-items-end">
-        <div class="col-md-6">
+        <div class="col-md-5">
           <label class="form-label">เลือกกิจกรรม</label>
           <select class="form-select" id="reportEventSelect" onchange="loadReportData()">
-            <option value="">-- ทุกกิจกรรม --</option>
+            <option value="">-- แสดงแยกทุกกิจกรรม --</option>
           </select>
         </div>
-        <div class="col-md-6 d-flex gap-2">
-          <button class="btn btn-primary" onclick="loadReportData()"><i class="bi bi-search"></i> แสดงรายงาน</button>
+        <div class="col-md-4">
+          <label class="form-label">ค้นหาในรายงาน</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" id="reportSearchInput" placeholder="ค้นหาชื่อ, องค์กร, ตำแหน่ง..." oninput="loadReportData()">
+          </div>
+        </div>
+        <div class="col-md-3 d-flex gap-2">
+          <button class="btn btn-primary w-100" onclick="loadReportData()"><i class="bi bi-arrow-clockwise"></i> รีเฟรชรายงาน</button>
         </div>
       </div>
     </div></div>
-    <div class="card"><div class="card-header d-flex align-items-center justify-content-between">
-      <span><i class="bi bi-table me-2"></i>รายชื่อผู้เข้าร่วม</span>
-      <small class="text-muted" id="reportCount"></small>
-    </div>
-    <div class="card-body p-0"><div class="table-responsive">
-      <table class="table table-hover mb-0">
-        <thead><tr><th>#</th><th>ชื่อ-นามสกุล</th><th>องค์กร</th><th>Check-in</th><th>Check-out</th><th>ระยะเวลา</th><th>สถานะ</th></tr></thead>
-        <tbody id="reportTableBody"><tr><td colspan="7" class="text-center py-4 text-muted">กรุณาเลือกกิจกรรม</td></tr></tbody>
-      </table>
-    </div></div></div>`;
+    <div id="reportOutputContainer"></div>`;
     populateEventSelectors();
+    const reportSel = document.getElementById('reportEventSelect');
+    if (reportSel && AppState.selectedEventID) {
+      reportSel.value = AppState.selectedEventID;
+    }
+    await loadReportData();
   }
 
   async function loadReportData() {
+    const container = document.getElementById('reportOutputContainer');
+    if (!container) return;
     const eventID = document.getElementById('reportEventSelect')?.value || '';
-    const res = await api('getFullAttendanceReport', { eventID });
-    if (!res.success) { showToast(res.message, 'error'); return; }
-    document.getElementById('reportCount').textContent = `ทั้งหมด ${res.data.length} คน`;
-    const statusMap = { 'checked-in': '<span class="status-badge badge-checked-in">อยู่ในงาน</span>', 'checked-out': '<span class="status-badge badge-checked-out">Check-out แล้ว</span>', 'not-arrived': '<span class="status-badge badge-not-arrived">ยังไม่มา</span>' };
-    document.getElementById('reportTableBody').innerHTML = res.data.map(r => `
-    <tr>
-      <td>${r.no}</td><td><strong>${r.FullName}</strong></td>
-      <td>${r.Organization || '—'}</td><td>${r.CheckInTime || '—'}</td>
-      <td>${r.CheckOutTime || '—'}</td><td>${r.Duration || '—'}</td>
-      <td>${statusMap[r.Status] || r.Status}</td>
-    </tr>`).join('');
+    const q = (document.getElementById('reportSearchInput')?.value || '').trim().toLowerCase();
+
+    container.innerHTML = `<div class="card"><div class="card-body text-center py-5 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>กำลังโหลดข้อมูลรายงาน...</div></div>`;
+
+    await loadAllParticipants();
+    await syncEventAttendanceMap();
+
+    const statusMap = {
+      'checked-in': '<span class="status-badge badge-checked-in">อยู่ในงาน</span>',
+      'checked-out': '<span class="status-badge badge-checked-out">Check-out แล้ว</span>',
+      'not-arrived': '<span class="status-badge badge-not-arrived">ยังไม่มา</span>'
+    };
+
+    const eventsToRender = eventID
+      ? AppState.events.filter(e => e.EventID === eventID)
+      : AppState.events;
+
+    if (!eventsToRender.length) {
+      container.innerHTML = `<div class="card"><div class="card-body text-center py-4 text-muted">ไม่พบข้อมูลกิจกรรม</div></div>`;
+      return;
+    }
+
+    const htmlSections = eventsToRender.map(ev => {
+      const eid = ev.EventID;
+      const participants = getParticipantsByEventLocal(eid);
+      const attList = AppState.attendanceByEvent[eid] || [];
+      const attMap = {};
+      attList.forEach(a => { attMap[String(a.PID).trim()] = a; });
+
+      let rows = participants.map(p => {
+        const att = attMap[String(p.PID).trim()] || null;
+        return {
+          PID: p.PID,
+          FullName: p.FullName,
+          Position: p.Position || '',
+          Organization: p.Organization || '',
+          Phone: p.Phone || '',
+          CheckInTime: att ? att.CheckInTime : '',
+          CheckOutTime: att ? att.CheckOutTime : '',
+          Duration: att ? att.Duration : '',
+          Status: att ? att.Status : 'not-arrived'
+        };
+      });
+
+      if (q) {
+        rows = rows.filter(r =>
+          (r.FullName && r.FullName.toLowerCase().includes(q)) ||
+          (r.Organization && r.Organization.toLowerCase().includes(q)) ||
+          (r.Position && r.Position.toLowerCase().includes(q)) ||
+          (r.Phone && String(r.Phone).toLowerCase().includes(q)) ||
+          (r.PID && String(r.PID).toLowerCase().includes(q))
+        );
+      }
+
+      const totalCount = rows.length;
+      const onlineCount = rows.filter(r => r.Status === 'checked-in').length;
+      const outCount = rows.filter(r => r.Status === 'checked-out').length;
+
+      return `
+      <div class="card event-group-card mb-4">
+        <div class="card-header event-group-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div>
+            <div class="fw-bold text-primary"><i class="bi bi-calendar2-check me-2"></i>${ev.EventName}</div>
+            <small class="text-muted"><i class="bi bi-calendar3 me-1"></i>${ev.Date || '—'} | <i class="bi bi-geo-alt me-1"></i>${ev.Location || '—'}</small>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            <span class="badge bg-primary rounded-pill">ทั้งหมด ${totalCount} คน</span>
+            <span class="badge bg-success rounded-pill">อยู่ในงาน ${onlineCount} คน</span>
+            <span class="badge bg-info text-dark rounded-pill">Check-out แล้ว ${outCount} คน</span>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>ชื่อ-นามสกุล</th>
+                  <th>ตำแหน่ง</th>
+                  <th>องค์กร/หน่วยงาน</th>
+                  <th>เบอร์โทร</th>
+                  <th>Check-in</th>
+                  <th>Check-out</th>
+                  <th>ระยะเวลา</th>
+                  <th>สถานะ</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.length ? rows.map((r, idx) => `
+                <tr>
+                  <td>${idx + 1}</td>
+                  <td><strong>${r.FullName}</strong><div class="small text-muted">${r.PID}</div></td>
+                  <td>${r.Position || '—'}</td>
+                  <td>${r.Organization || '—'}</td>
+                  <td>${r.Phone || '—'}</td>
+                  <td>${r.CheckInTime || '—'}</td>
+                  <td>${r.CheckOutTime || '—'}</td>
+                  <td>${r.Duration || '—'}</td>
+                  <td>${statusMap[r.Status] || r.Status}</td>
+                </tr>`).join('') : `<tr><td colspan="9" class="text-center py-4 text-muted">ยังไม่มีรายชื่อผู้เข้าอบรมในกิจกรรมนี้</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    });
+
+    container.innerHTML = htmlSections.join('');
   }
 
   // ===== EXPORT PAGE =====
@@ -1265,12 +1887,62 @@
   async function doExportFull() {
     const eventID = document.getElementById('exportFullEventSelect').value;
     showLoading('กำลังสร้างไฟล์ CSV...');
-    const res = await api('exportFullReportCSV', { eventID });
+    await loadAllParticipants();
+    await syncEventAttendanceMap();
+
+    const escCsv = (val) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    };
+
+    const statusText = { 'checked-in': 'อยู่ในงาน', 'checked-out': 'ออกแล้ว', 'not-arrived': 'ยังไม่มา' };
+    const headers = ['ที่', 'กิจกรรม', 'PID', 'ชื่อ-นามสกุล', 'องค์กร', 'ตำแหน่ง', 'เบอร์โทร', 'อีเมล', 'เวลา Check-in', 'เวลา Check-out', 'ระยะเวลา', 'สถานะ', 'Browser', 'Device'];
+    const rows = [headers.join(',')];
+
+    const eventsToExport = eventID
+      ? AppState.events.filter(e => e.EventID === eventID)
+      : AppState.events;
+
+    let seq = 0;
+    eventsToExport.forEach(ev => {
+      const eid = ev.EventID;
+      const participants = getParticipantsByEventLocal(eid);
+      const attList = AppState.attendanceByEvent[eid] || [];
+      const attMap = {};
+      attList.forEach(a => { attMap[String(a.PID).trim()] = a; });
+
+      participants.forEach(p => {
+        seq++;
+        const att = attMap[String(p.PID).trim()] || null;
+        const st = att ? att.Status : 'not-arrived';
+        rows.push([
+          seq,
+          escCsv(ev.EventName || eid),
+          escCsv(p.PID),
+          escCsv(p.FullName),
+          escCsv(p.Organization || ''),
+          escCsv(p.Position || ''),
+          escCsv(p.Phone || ''),
+          escCsv(p.Email || ''),
+          escCsv(att ? att.CheckInTime : ''),
+          escCsv(att ? att.CheckOutTime : ''),
+          escCsv(att ? att.Duration : ''),
+          escCsv(statusText[st] || st),
+          escCsv(att ? att.Browser : ''),
+          escCsv(att ? att.Device : '')
+        ].join(','));
+      });
+    });
+
     hideLoading();
-    if (res.success) {
-      downloadCSV(res.csvContent, res.filename);
-      showToast(`Export สำเร็จ ${res.count} รายการ`, 'success');
-    } else showToast(res.message, 'error');
+    const csvContent = '\uFEFF' + rows.join('\r\n');
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    downloadCSV(csvContent, `full_report_${eventID || 'all'}_${dateStr}.csv`);
+    showToast(`Export สำเร็จ ${seq} รายการ`, 'success');
   }
 
   function downloadCSV(content, filename) {

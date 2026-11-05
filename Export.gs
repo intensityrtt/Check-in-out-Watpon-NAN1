@@ -138,7 +138,7 @@ function exportFullReportCSV(token, eventID) {
     const data = reportResult.data;
 
     const header = [
-      "ที่", "PID", "คำนำหน้า", "ชื่อ", "นามสกุล",
+      "ที่", "กิจกรรม", "PID", "คำนำหน้า", "ชื่อ", "นามสกุล",
       "ชื่อ-นามสกุล", "องค์กร/หน่วยงาน", "ตำแหน่ง",
       "เบอร์โทร", "อีเมล",
       "เวลา Check-in", "เวลา Check-out",
@@ -157,6 +157,7 @@ function exportFullReportCSV(token, eventID) {
 
       rows.push([
         item.no.toString(),
+        item.EventName || "",
         item.PID,
         item.Title || "",
         item.FirstName || "",

@@ -252,7 +252,7 @@
     </div>
   </div>
 
-  <div class="text-center mt-3 mb-4">
+  <div class="text-center mt-2 mb-3 admin-login-link-wrap d-none">
     <a href="#" class="text-muted small text-decoration-none opacity-50" onclick="switchToAdminLogin(event)">
       <i class="bi bi-shield-lock me-1"></i> สำหรับผู้ดูแลระบบ (Admin)
     </a>
@@ -261,29 +261,49 @@
   <!-- Search Results -->
   <div id="checkinResults" class="mb-3"></div>
 
-  <!-- Recent Check-ins -->
+  <!-- All Check-ins in Selected Event -->
   <div class="card" id="recentCheckinsCard">
-    <div class="card-header d-flex align-items-center justify-content-between">
-      <span><i class="bi bi-clock-history me-2 text-success"></i>Check-in ล่าสุด</span>
-      <button class="btn btn-sm btn-outline-secondary" onclick="loadRecentCheckins()">
-        <i class="bi bi-arrow-clockwise"></i>
-      </button>
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <span class="fw-bold"><i class="bi bi-people-fill me-2 text-success"></i>รายชื่อผู้เช็คอินทั้งหมด</span>
+        <span class="badge bg-primary" id="checkinCountTotal">ทั้งหมด 0 คน</span>
+        <span class="badge bg-success" id="checkinCountOnline">อยู่ในงาน 0 คน</span>
+        <span class="badge bg-secondary" id="checkinCountOut">Check-out แล้ว 0 คน</span>
+      </div>
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <select class="form-select form-select-sm" id="checkinStatusFilter" style="width:auto" onchange="filterRecentCheckins()">
+          <option value="">ทุกสถานะ</option>
+          <option value="checked-in">อยู่ในงาน</option>
+          <option value="checked-out">Check-out แล้ว</option>
+        </select>
+        <div class="search-box" style="width:220px">
+          <i class="bi bi-search search-icon"></i>
+          <input type="text" class="form-control form-control-sm" id="checkinListSearch"
+            placeholder="ค้นหาผู้เช็คอิน..." oninput="filterRecentCheckins()">
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadRecentCheckins()" title="รีเฟรชรายชื่อผู้เช็คอิน">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
     </div>
     <div class="card-body p-0">
-      <div class="table-responsive">
+      <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
         <table class="table table-hover mb-0">
-          <thead>
+          <thead style="position: sticky; top: 0; z-index: 5;">
             <tr>
               <th>#</th>
               <th>ชื่อ-นามสกุล</th>
-              <th>องค์กร</th>
+              <th>ตำแหน่ง</th>
+              <th>องค์กร/หน่วยงาน</th>
+              <th>เบอร์โทร</th>
               <th>เวลา Check-in</th>
+              <th>เวลา Check-out</th>
               <th>สถานะ</th>
             </tr>
           </thead>
           <tbody id="recentCheckinBody">
             <tr>
-              <td colspan="5" class="text-center py-3 text-muted">เลือกกิจกรรมก่อน</td>
+              <td colspan="8" class="text-center py-3 text-muted">กำลังโหลดรายชื่อผู้เช็คอิน...</td>
             </tr>
           </tbody>
         </table>

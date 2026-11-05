@@ -107,10 +107,10 @@ function handleApiAction(action, data, token) {
 
     // ===== Participants =====
     case "getAllParticipants":
-      return getAllParticipants();
+      return getAllParticipants(data.eventID);
 
     case "searchParticipants":
-      return searchParticipants(data.query);
+      return searchParticipants(data.query, data.eventID);
 
     case "addParticipant":
       return addParticipant(token, data);
@@ -122,7 +122,7 @@ function handleApiAction(action, data, token) {
       return deleteParticipant(token, data.PID);
 
     case "importParticipants":
-      return importParticipantsFromCSV(token, data.csvData);
+      return importParticipantsFromCSV(token, data.csvData, data.eventID);
 
     // ===== Check-in / Check-out =====
     case "checkIn":
@@ -152,6 +152,9 @@ function handleApiAction(action, data, token) {
 
     case "getAttendanceByEvent":
       return getAttendanceByEvent(data.eventID);
+
+    case "getAllAttendance":
+      return getAllAttendance();
 
     case "getFullAttendanceReport":
       return getFullAttendanceReport(token, data.eventID);

@@ -93,7 +93,7 @@ function initializeSheet(sheet, sheetName) {
     ],
     [CONFIG.SHEET_PARTICIPANTS]: [
       "PID", "Title", "FirstName", "LastName", "Organization",
-      "Position", "Email", "Phone", "CreatedAt", "Status"
+      "Position", "Email", "Phone", "CreatedAt", "Status", "EventID"
     ],
     [CONFIG.SHEET_ATTENDANCE]: [
       "PID", "EventID", "CheckInTime", "CheckOutTime",
