@@ -4114,8 +4114,6 @@
       });
     }
   }
-    }
-  }
 
   async function loadRecentCheckins() {
     if (typeof QR_MODE !== 'undefined' && QR_MODE) return;
@@ -4853,12 +4851,17 @@
   }
 
   // ===== APP STARTUP =====
-  window.addEventListener('load', async () => {
-    // จำลอง loading progress
-    await new Promise(r => setTimeout(r, 1000));
-    document.getElementById('loadingScreen').style.opacity = '0';
-    document.getElementById('loadingScreen').style.transition = 'opacity 0.5s';
-    setTimeout(() => document.getElementById('loadingScreen').style.display = 'none', 500);
+  async function initApp() {
+    if (window._appInitialized) return;
+    window._appInitialized = true;
+
+    // ซ่อนหน้าจอ Loading
+    const loadingScreen = document.getElementById('loadingScreen');
+    if (loadingScreen) {
+      loadingScreen.style.opacity = '0';
+      loadingScreen.style.transition = 'opacity 0.5s';
+      setTimeout(() => { if (loadingScreen) loadingScreen.style.display = 'none'; }, 500);
+    }
 
     applyDarkMode();
     updateClock();
@@ -4941,7 +4944,17 @@
     }
     // แสดง Login
     document.getElementById('loginModal').classList.remove('d-none');
-  });
+  }
+
+  // เรียกทำงานทันทีที่ DOM พร้อม
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(initApp, 500);
+  } else {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(initApp, 500));
+    window.addEventListener('load', () => setTimeout(initApp, 500));
+  }
+  // Fallback รับประกันการซ่อน Loading Screen แม้มี Asset ช้า
+  setTimeout(initApp, 2500);
 
   function switchToAdminLogin(e) {
     if (e) e.preventDefault();
