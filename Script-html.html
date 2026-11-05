@@ -1210,6 +1210,9 @@
     const btnCheckout = document.getElementById('btn-public-checkout');
     const contentCheckin = document.getElementById('publicCheckinContent');
     const contentCheckout = document.getElementById('publicCheckoutContent');
+    const eventID = document.getElementById('checkinEventSelect')?.value || '';
+    const curEv = (typeof QR_EVENT !== 'undefined' && QR_EVENT) || AppState.events.find(e => e.EventID === eventID);
+    const isClosed = curEv && curEv.Status === 'closed';
 
     if (tab === 'checkin') {
       btnCheckin.classList.add('active');
@@ -1226,6 +1229,16 @@
       contentCheckout.classList.remove('d-none');
       contentCheckin.classList.add('d-none');
       
+      // แสดง/ซ่อน แถบแจ้งเตือนเมื่อกิจกรรมปิดลงทะเบียน
+      const closedAlert = document.getElementById('publicCheckoutClosedAlert');
+      if (closedAlert) {
+        closedAlert.classList.toggle('d-none', !isClosed);
+      }
+      const searchBtn = document.querySelector('#publicCheckoutContent button.btn-premium-warning');
+      const searchInput = document.getElementById('publicCheckoutSearchVal');
+      if (searchBtn) searchBtn.disabled = !!isClosed;
+      if (searchInput) searchInput.disabled = !!isClosed;
+
       // Reset checkout sub-views
       document.getElementById('publicCheckoutSearchVal').value = '';
       document.getElementById('publicCheckoutSearchResults').innerHTML = '';
@@ -1241,6 +1254,19 @@
       showToast('ไม่พบรหัสกิจกรรม กรุณาลองแสกน QR Code ใหม่อีกครั้ง', 'error');
       return;
     }
+
+    const curEv = (typeof QR_EVENT !== 'undefined' && QR_EVENT) || AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'กิจกรรมปิดการลงทะเบียนแล้ว',
+        text: 'กิจกรรมนี้ปิดระบบลงทะเบียนแล้ว จึงไม่สามารถทำรายการ Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+      return;
+    }
+
     if (q.length < 1) {
       showToast('กรุณากรอกชื่อ หรือเบอร์โทรศัพท์เพื่อค้นหา', 'warning');
       return;
@@ -1255,7 +1281,7 @@
     document.getElementById('publicCheckoutFormArea').classList.add('d-none'); // Hide form initially
 
     if (!res.success || !res.data.length) {
-      resultsDiv.innerHTML = `<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>ไม่พบข้อมูลผู้ลงทะเบียนตามเงื่อนไขที่ระบุ กรุณาตรวจสอบตัวสะกดหรือติดต่อเจ้าหน้าที่</div>`;
+      resultsDiv.innerHTML = `<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>${res.message || 'ไม่พบข้อมูลผู้ลงทะเบียนตามเงื่อนไขที่ระบุ กรุณาตรวจสอบตัวสะกดหรือติดต่อเจ้าหน้าที่'}</div>`;
       return;
     }
 
@@ -1270,7 +1296,6 @@
             btn = `<button class="btn btn-outline-secondary btn-sm" disabled><i class="bi bi-check2-all"></i> Check-out แล้ว</button>`;
           } else if (p.Status === 'can-checkout') {
             badge = '<span class="badge bg-success">อยู่ในงาน</span>';
-            // เผื่อมีเครื่องหมายคำพูดในชื่อ แนะนำให้แปลง JSON เป็น string แบบเซฟ
             const pStr = encodeURIComponent(JSON.stringify(p));
             btn = `<button class="btn btn-warning btn-sm fw-bold" onclick="selectParticipantForPublicCheckout('${pStr}')"><i class="bi bi-box-arrow-right"></i> เลือกเพื่อ Check-out</button>`;
           } else {
@@ -1290,6 +1315,19 @@
   }
 
   window.selectParticipantForPublicCheckout = function(pStr) {
+    const eventID = document.getElementById('checkinEventSelect')?.value || '';
+    const curEv = (typeof QR_EVENT !== 'undefined' && QR_EVENT) || AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'กิจกรรมปิดการลงทะเบียนแล้ว',
+        text: 'กิจกรรมนี้ปิดระบบลงทะเบียนแล้ว จึงไม่สามารถทำรายการ Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+      return;
+    }
+
     const p = JSON.parse(decodeURIComponent(pStr));
     // Fill the checkout form
     document.getElementById('pubOutPID').value = p.PID;
@@ -1311,6 +1349,18 @@
     const eventID = document.getElementById('checkinEventSelect')?.value || '';
     if (!eventID) {
       showToast('ไม่พบรหัสกิจกรรม กรุณาลองแสกน QR Code ใหม่อีกครั้ง', 'error');
+      return;
+    }
+
+    const curEv = (typeof QR_EVENT !== 'undefined' && QR_EVENT) || AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'กิจกรรมปิดการลงทะเบียนแล้ว',
+        text: 'กิจกรรมนี้ปิดระบบลงทะเบียนแล้ว จึงไม่สามารถทำรายการ Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
       return;
     }
 
@@ -1522,6 +1572,8 @@
     const q = document.getElementById('checkoutSearch').value.trim();
     if (q.length < 1) { document.getElementById('checkoutResults').innerHTML = ''; return; }
     const eventID = document.getElementById('checkoutEventSelect').value;
+    const curEv = AppState.events.find(e => e.EventID === eventID);
+    const isClosed = curEv && curEv.Status === 'closed';
 
     if (!AppState.participants.length) await loadAllParticipants();
     if (eventID && !AppState.attendanceByEvent[eventID]) {
@@ -1551,7 +1603,11 @@
       if (att && att.Status === 'checked-out') {
         actionHtml = `<span class="status-badge badge-checked-out">Check-out แล้ว (${att.CheckOutTime || ''})</span>`;
       } else if (att && att.Status === 'checked-in') {
-        actionHtml = `<button class="btn btn-warning btn-sm" onclick="doCheckOut('${p.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button>`;
+        if (isClosed) {
+          actionHtml = `<button class="btn btn-secondary btn-sm" disabled title="กิจกรรมปิดการลงทะเบียนแล้ว"><i class="bi bi-lock-fill"></i> ปิดระบบแล้ว</button>`;
+        } else {
+          actionHtml = `<button class="btn btn-warning btn-sm" onclick="doCheckOut('${p.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button>`;
+        }
       } else {
         actionHtml = `<span class="status-badge badge-not-arrived">ยังไม่ได้ Check-in</span>`;
       }
@@ -1570,6 +1626,17 @@
   async function doCheckOut(pid) {
     const eventID = document.getElementById('checkoutEventSelect').value;
     if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+    const curEv = AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ไม่สามารถ Check-out ได้',
+        text: 'กิจกรรมนี้ปิดการลงทะเบียนแล้ว จึงไม่สามารถบันทึกเวลา Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+      return;
+    }
     showLoading('กำลัง Check-out...');
     const res = await api('checkOut', { pid, eventID });
     hideLoading();
@@ -1589,6 +1656,7 @@
     const btnAll = document.getElementById('btnCheckoutAll');
     const selectAllPending = document.getElementById('selectAllPending');
     const selectedCountSpan = document.getElementById('selectedPendingCount');
+    const closedAlert = document.getElementById('checkoutClosedAlert');
     
     // Reset controls
     if (btnSelect) btnSelect.disabled = true;
@@ -1596,7 +1664,19 @@
     if (selectAllPending) selectAllPending.checked = false;
     if (selectedCountSpan) selectedCountSpan.textContent = '0';
 
-    if (!eventID) return;
+    if (!eventID) {
+      if (closedAlert) closedAlert.classList.add('d-none');
+      return;
+    }
+
+    const curEv = AppState.events.find(e => e.EventID === eventID);
+    const isClosed = curEv && curEv.Status === 'closed';
+
+    if (closedAlert) {
+      if (isClosed) closedAlert.classList.remove('d-none');
+      else closedAlert.classList.add('d-none');
+    }
+
     await loadAllParticipants();
     const res = await api('getAttendanceByEvent', { eventID });
     const tbody = document.getElementById('pendingCheckoutBody');
@@ -1608,19 +1688,27 @@
       return; 
     }
     
-    if (btnAll) btnAll.disabled = false;
+    if (selectAllPending) selectAllPending.disabled = isClosed;
+    if (btnAll) btnAll.disabled = isClosed ? true : false;
     
     const pidMap = {};
     AppState.participants.forEach(p => pidMap[String(p.PID).trim()] = p);
     tbody.innerHTML = pending.map((a, i) => {
       const p = pidMap[String(a.PID).trim()] || { FullName: a.PID, Organization: '' };
+      const chkHtml = isClosed
+        ? `<input type="checkbox" class="pending-chk" value="${a.PID}" disabled>`
+        : `<input type="checkbox" class="pending-chk" value="${a.PID}" onchange="onPendingChkChange()">`;
+      const actHtml = isClosed
+        ? `<button class="btn btn-secondary btn-sm" disabled title="กิจกรรมปิดการลงทะเบียนแล้ว"><i class="bi bi-lock-fill"></i> ปิดระบบแล้ว</button>`
+        : `<button class="btn btn-warning btn-sm" onclick="doCheckOut('${a.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button>`;
+
       return `<tr>
-      <td class="text-center"><input type="checkbox" class="pending-chk" value="${a.PID}" onchange="onPendingChkChange()"></td>
+      <td class="text-center">${chkHtml}</td>
       <td>${i + 1}</td>
       <td><strong>${p.FullName}</strong></td>
       <td>${p.Organization || '—'}</td>
       <td>${a.CheckInTime}</td>
-      <td><button class="btn btn-warning btn-sm" onclick="doCheckOut('${a.PID}')"><i class="bi bi-box-arrow-right"></i> Check-out</button></td>
+      <td>${actHtml}</td>
     </tr>`;
     }).join('');
   }
@@ -1648,6 +1736,18 @@
   window.doBatchCheckOut = async function() {
     const eventID = document.getElementById('checkoutEventSelect').value;
     if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+
+    const curEv = AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ไม่สามารถ Check-out ได้',
+        text: 'กิจกรรมนี้ปิดการลงทะเบียนแล้ว จึงไม่สามารถบันทึกเวลา Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+      return;
+    }
     
     const chks = document.querySelectorAll('.pending-chk:checked');
     const pids = Array.from(chks).map(chk => chk.value);
@@ -1682,6 +1782,18 @@
   window.doCheckOutAll = async function() {
     const eventID = document.getElementById('checkoutEventSelect').value;
     if (!eventID) { showToast('กรุณาเลือกกิจกรรมก่อน', 'warning'); return; }
+
+    const curEv = AppState.events.find(e => e.EventID === eventID);
+    if (curEv && curEv.Status === 'closed') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ไม่สามารถ Check-out ได้',
+        text: 'กิจกรรมนี้ปิดการลงทะเบียนแล้ว จึงไม่สามารถบันทึกเวลา Check-out ได้',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)'
+      });
+      return;
+    }
 
     const chks = document.querySelectorAll('.pending-chk');
     const pids = Array.from(chks).map(chk => chk.value);

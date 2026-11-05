@@ -85,6 +85,15 @@ function checkOut(params) {
   try {
     const { pid, eventID, remark } = params;
 
+    // ตรวจสอบกิจกรรมและสถานะเปิด/ปิด
+    const event = getEventByID(eventID);
+    if (!event) {
+      return { success: false, message: "ไม่พบกิจกรรม" };
+    }
+    if (event.Status === "closed") {
+      return { success: false, message: "กิจกรรมนี้ปิดการลงทะเบียนแล้ว ไม่สามารถ Check-out ได้" };
+    }
+
     // ตรวจสอบผู้เข้าร่วม
     const participant = getParticipantByPID(pid);
     if (!participant) {
@@ -512,6 +521,15 @@ function searchParticipantForPublicCheckout(eventID, query) {
     if (!eventID) {
       return { success: false, message: "ไม่ระบุรหัสกิจกรรม" };
     }
+
+    const event = getEventByID(eventID);
+    if (!event) {
+      return { success: false, message: "ไม่พบกิจกรรม" };
+    }
+    if (event.Status === "closed") {
+      return { success: false, message: "กิจกรรมนี้ปิดการลงทะเบียนแล้ว ไม่สามารถทำรายการ Check-out ได้" };
+    }
+
     if (!query || query.trim() === "") {
       return { success: false, message: "กรุณาระบุชื่อ นามสกุล หรือเบอร์โทรศัพท์เพื่อค้นหา" };
     }
@@ -590,6 +608,14 @@ function updateAndCheckOutPublic(data) {
 
     if (!pid || !eventID) {
       return { success: false, message: "ข้อมูลไม่ครบถ้วน (PID หรือ EventID หายไป)" };
+    }
+
+    const event = getEventByID(eventID);
+    if (!event) {
+      return { success: false, message: "ไม่พบกิจกรรม" };
+    }
+    if (event.Status === "closed") {
+      return { success: false, message: "กิจกรรมนี้ปิดการลงทะเบียนแล้ว ไม่สามารถทำรายการ Check-out ได้" };
     }
 
     // 1. อัปเดตข้อมูลผู้เข้าร่วม
@@ -673,6 +699,12 @@ function batchCheckOut(token, eventID, pids, remark) {
   if (!isAuthenticated(token)) return { success: false, message: "Session หมดอายุ" };
   if (!eventID) return { success: false, message: "ไม่ระบุรหัสกิจกรรม" };
   if (!pids || !pids.length) return { success: false, message: "ไม่พบรายการที่จะ Check-out" };
+
+  const event = getEventByID(eventID);
+  if (!event) return { success: false, message: "ไม่พบกิจกรรม" };
+  if (event.Status === "closed") {
+    return { success: false, message: "กิจกรรมนี้ปิดการลงทะเบียนแล้ว ไม่สามารถ Check-out ได้" };
+  }
 
   try {
     const sheet = getSheet(CONFIG.SHEET_ATTENDANCE);
